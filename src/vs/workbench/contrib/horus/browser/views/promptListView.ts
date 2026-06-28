@@ -1,4 +1,5 @@
 import * as DOM from '../../../../../base/browser/dom.js';
+import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
@@ -20,6 +21,9 @@ import { horusWorkbenchState } from '../horusWorkbenchState.js';
 import { HorusViewPane } from './horusViewPane.js';
 
 export class HorusPromptListView extends HorusViewPane {
+
+	private readonly renderDisposables = this._register(new DisposableStore());
+	private refreshGeneration = 0;
 
 	constructor(
 		options: IViewletViewOptions,
@@ -53,10 +57,18 @@ export class HorusPromptListView extends HorusViewPane {
 			return;
 		}
 
+		const refreshGeneration = ++this.refreshGeneration;
+		const isStaleRefresh = () => refreshGeneration !== this.refreshGeneration || !this.horusBody;
+
+		this.renderDisposables.clear();
 		DOM.clearNode(this.horusBody);
-		this.horusBody.appendChild(this.renderButton(localize('horusCreatePrompt', "Create Prompt"), () => this.commandService.executeCommand(HorusCommandId.CreatePrompt)));
+		this.horusBody.appendChild(this.renderPromptListButton(localize('horusCreatePrompt', "Create Prompt"), () => this.commandService.executeCommand(HorusCommandId.CreatePrompt)));
 
 		const workspaces = await resolveNativeHorusWorkspaces(this.workspaceContextService, this.horusStorageService);
+		if (isStaleRefresh()) {
+			return;
+		}
+
 		if (!workspaces.length) {
 			this.appendMessage(localize('horusOpenWorkspaceForPrompts', "Open a folder to create and list Horus prompts."));
 			return;
@@ -69,6 +81,10 @@ export class HorusPromptListView extends HorusViewPane {
 		}
 
 		const prompts = await this.horusStorageService.listPrompts({ workingDirectoryId: selectedWorkspaceId, rootOnly: true });
+		if (isStaleRefresh()) {
+			return;
+		}
+
 		if (!prompts.length) {
 			horusWorkbenchState.setSelectedPromptId(undefined);
 			this.appendMessage(localize('horusNoPrompts', "No root prompts in this workspace."));
@@ -77,8 +93,13 @@ export class HorusPromptListView extends HorusViewPane {
 
 		const selectedPromptId = horusWorkbenchState.getSelectedPromptId();
 		const selectedPrompt = selectedPromptId ? await this.horusStorageService.getPrompt(selectedPromptId) : undefined;
+		if (isStaleRefresh()) {
+			return;
+		}
+
 		if (!selectedPrompt || selectedPrompt.workingDirectoryId !== selectedWorkspaceId) {
 			horusWorkbenchState.setSelectedPromptId(prompts[0].id);
+			return;
 		}
 
 		const list = DOM.append(this.horusBody, DOM.$('.horus-list'));
@@ -99,14 +120,21 @@ export class HorusPromptListView extends HorusViewPane {
 		const description = DOM.append(item, DOM.$('.horus-list-description'));
 		description.textContent = `v${prompt.currentVersion} - ${new Date(prompt.updatedAtUtc).toLocaleString()}`;
 
-		this._register(DOM.addDisposableListener(item, DOM.EventType.CLICK, () => {
+		this.renderDisposables.add(DOM.addDisposableListener(item, DOM.EventType.CLICK, () => {
 			horusWorkbenchState.setSelectedPromptId(prompt.id);
 		}));
-		this._register(DOM.addDisposableListener(item, DOM.EventType.DBLCLICK, () => {
+		this.renderDisposables.add(DOM.addDisposableListener(item, DOM.EventType.DBLCLICK, () => {
 			horusWorkbenchState.setSelectedPromptId(prompt.id);
 			this.commandService.executeCommand(HorusCommandId.OpenPrompt, prompt.id);
 		}));
 
 		return item;
+	}
+
+	private renderPromptListButton(label: string, command: () => void): HTMLButtonElement {
+		const button = DOM.$('button.horus-button') as HTMLButtonElement;
+		button.textContent = label;
+		this.renderDisposables.add(DOM.addDisposableListener(button, DOM.EventType.CLICK, () => command()));
+		return button;
 	}
 }
