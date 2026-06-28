@@ -7,7 +7,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IHorusStorageService } from '../../../../platform/horus/common/horusStorage.js';
-import { HorusLinkedDocument, HorusLinkedDocumentStatus, HorusLinkedDocumentVersionSource, HorusPrompt, HorusWorkspace } from '../../../../platform/horus/common/horusTypes.js';
+import { HorusLinkedDocument, HorusLinkedDocumentStatus, HorusLinkedDocumentVersion, HorusLinkedDocumentVersionSource, HorusPrompt, HorusPromptVersion, HorusWorkspace } from '../../../../platform/horus/common/horusTypes.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
@@ -36,6 +36,18 @@ import { HorusWorkspaceListView } from './views/workspaceListView.js';
 const horusViewIcon = registerIcon('horus-view-icon', Codicon.eye, localize('horusViewIcon', 'View icon of the Horus view.'));
 const horusCategory = localize2('horusCategory', "Horus");
 const openFolderCommandId = 'workbench.action.files.openFolder';
+
+interface HorusVersionPick<TVersion extends HorusComparableVersion> {
+	readonly label: string;
+	readonly description: string;
+	readonly detail?: string;
+	readonly version: TVersion;
+}
+
+interface HorusComparableVersion {
+	readonly versionNumber: number;
+	readonly createdAtUtc: string;
+}
 
 class HorusPromptEditorInputSerializer implements IEditorSerializer {
 
@@ -232,6 +244,56 @@ async function resolveLinkedPlanForCommand(
 	}
 
 	return document;
+}
+
+async function pickVersionPair<TVersion extends HorusComparableVersion>(
+	quickInputService: IQuickInputService,
+	versions: readonly TVersion[],
+	originalPlaceHolder: string,
+	modifiedPlaceHolder: string,
+	getDetail: (version: TVersion) => string | undefined
+): Promise<{ readonly original: TVersion; readonly modified: TVersion } | undefined> {
+	const items = versions.map(version => toVersionPickItem(version, getDetail));
+	const original = await quickInputService.pick(items, { placeHolder: originalPlaceHolder });
+	if (!original) {
+		return undefined;
+	}
+
+	const modified = await quickInputService.pick(items.filter(item => item.version.versionNumber !== original.version.versionNumber), { placeHolder: modifiedPlaceHolder });
+	if (!modified) {
+		return undefined;
+	}
+
+	return { original: original.version, modified: modified.version };
+}
+
+function toVersionPickItem<TVersion extends HorusComparableVersion>(version: TVersion, getDetail: (version: TVersion) => string | undefined): HorusVersionPick<TVersion> {
+	return {
+		label: localize('horusVersionPickLabel', "Version {0}", version.versionNumber),
+		description: new Date(version.createdAtUtc).toLocaleString(),
+		detail: getDetail(version),
+		version
+	};
+}
+
+function getPromptVersionPickDetail(version: HorusPromptVersion): string | undefined {
+	const note = version.changeNote?.trim();
+	return note ? localize('horusPromptVersionPickDetail', "{0} - {1} characters", note, version.content.length) : localize('horusPromptVersionPickDetailNoNote', "{0} characters", version.content.length);
+}
+
+function getLinkedDocumentVersionPickDetail(version: HorusLinkedDocumentVersion): string {
+	return localize('horusLinkedVersionPickDetail', "{0} - {1} bytes - {2}", getLinkedDocumentVersionSourceLabel(version.source), version.sizeBytes, version.contentHash.slice(0, 12));
+}
+
+function getLinkedDocumentVersionSourceLabel(source: HorusLinkedDocumentVersionSource): string {
+	switch (source) {
+		case HorusLinkedDocumentVersionSource.Initial:
+			return localize('horusLinkedVersionSourceInitial', "Initial");
+		case HorusLinkedDocumentVersionSource.FileWatcher:
+			return localize('horusLinkedVersionSourceFileWatcher', "File watcher");
+		case HorusLinkedDocumentVersionSource.ManualRefresh:
+			return localize('horusLinkedVersionSourceManualRefresh', "Manual refresh");
+	}
 }
 
 registerAction2(class extends Action2 {
@@ -517,6 +579,7 @@ registerAction2(class extends Action2 {
 		const notificationService = accessor.get(INotificationService);
 		const horusStorageService = accessor.get(IHorusStorageService);
 		const editorService = accessor.get(IEditorService);
+		const quickInputService = accessor.get(IQuickInputService);
 
 		const document = await resolveLinkedPlanForCommand(horusStorageService, notificationService, promptIdOrLinkedDocumentId);
 		if (!document) {
@@ -529,11 +592,21 @@ registerAction2(class extends Action2 {
 			return;
 		}
 
-		const [latest, previous] = versions;
+		const pair = await pickVersionPair(
+			quickInputService,
+			versions,
+			localize('horusPickLinkedPlanOriginalVersion', "Select the linked plan base/original version"),
+			localize('horusPickLinkedPlanModifiedVersion', "Select the linked plan version to compare against"),
+			getLinkedDocumentVersionPickDetail
+		);
+		if (!pair) {
+			return;
+		}
+
 		await editorService.openEditor({
-			label: localize('horusLinkedPlanDiffLabel', "{0}: v{1} ↔ v{2}", document.displayName ?? 'Linked plan', previous.versionNumber, latest.versionNumber),
-			original: { resource: createHorusLinkedDocumentVersionResource(document.id, previous.versionNumber) },
-			modified: { resource: createHorusLinkedDocumentVersionResource(document.id, latest.versionNumber) },
+			label: localize('horusLinkedPlanDiffLabel', "{0}: v{1} ↔ v{2}", document.displayName ?? 'Linked plan', pair.original.versionNumber, pair.modified.versionNumber),
+			original: { resource: createHorusLinkedDocumentVersionResource(document.id, pair.original.versionNumber) },
+			modified: { resource: createHorusLinkedDocumentVersionResource(document.id, pair.modified.versionNumber) },
 			options: { pinned: true }
 		});
 	}
@@ -554,6 +627,7 @@ registerAction2(class extends Action2 {
 		const notificationService = accessor.get(INotificationService);
 		const horusStorageService = accessor.get(IHorusStorageService);
 		const editorService = accessor.get(IEditorService);
+		const quickInputService = accessor.get(IQuickInputService);
 
 		const prompt = await resolveSelectedPromptForCommand(horusStorageService, notificationService, promptId);
 		if (!prompt) {
@@ -566,11 +640,21 @@ registerAction2(class extends Action2 {
 			return;
 		}
 
-		const [latest, previous] = versions;
+		const pair = await pickVersionPair(
+			quickInputService,
+			versions,
+			localize('horusPickPromptOriginalVersion', "Select the prompt base/original version"),
+			localize('horusPickPromptModifiedVersion', "Select the prompt version to compare against"),
+			getPromptVersionPickDetail
+		);
+		if (!pair) {
+			return;
+		}
+
 		await editorService.openEditor({
-			label: localize('horusPromptDiffLabel', "{0}: v{1} ↔ v{2}", prompt.title, previous.versionNumber, latest.versionNumber),
-			original: { resource: createHorusPromptVersionResource(prompt.id, previous.versionNumber) },
-			modified: { resource: createHorusPromptVersionResource(prompt.id, latest.versionNumber) },
+			label: localize('horusPromptDiffLabel', "{0}: v{1} ↔ v{2}", prompt.title, pair.original.versionNumber, pair.modified.versionNumber),
+			original: { resource: createHorusPromptVersionResource(prompt.id, pair.original.versionNumber) },
+			modified: { resource: createHorusPromptVersionResource(prompt.id, pair.modified.versionNumber) },
 			options: { pinned: true }
 		});
 	}
