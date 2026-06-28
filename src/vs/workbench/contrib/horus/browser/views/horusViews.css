@@ -3,6 +3,37 @@
 	height: 100%;
 	padding: 8px;
 	overflow: auto;
+	font-family: var(--vscode-font-family);
+	font-size: var(--vscode-font-size);
+	line-height: 1.4;
+	scrollbar-color: var(--vscode-scrollbarSlider-background) transparent;
+	scrollbar-width: thin;
+}
+
+.horus-view-pane::-webkit-scrollbar,
+.horus-editor-mentions::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+.horus-view-pane::-webkit-scrollbar-corner,
+.horus-editor-mentions::-webkit-scrollbar-corner {
+	background-color: transparent;
+}
+
+.horus-view-pane::-webkit-scrollbar-thumb,
+.horus-editor-mentions::-webkit-scrollbar-thumb {
+	background-color: var(--vscode-scrollbarSlider-background);
+}
+
+.horus-view-pane::-webkit-scrollbar-thumb:hover,
+.horus-editor-mentions::-webkit-scrollbar-thumb:hover {
+	background-color: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+.horus-view-pane::-webkit-scrollbar-thumb:active,
+.horus-editor-mentions::-webkit-scrollbar-thumb:active {
+	background-color: var(--vscode-scrollbarSlider-activeBackground);
 }
 
 .horus-button {
@@ -14,6 +45,9 @@
 	border: 0;
 	border-radius: 2px;
 	cursor: pointer;
+	font-family: inherit;
+	font-size: inherit;
+	line-height: 18px;
 }
 
 .horus-button:hover {
@@ -83,6 +117,9 @@
 	height: 100%;
 	color: var(--vscode-editor-foreground);
 	background: var(--vscode-editor-background);
+	font-family: var(--vscode-font-family);
+	font-size: var(--vscode-font-size);
+	line-height: 1.4;
 }
 
 .horus-editor-root {
@@ -115,6 +152,8 @@
 	color: var(--vscode-input-foreground);
 	background: var(--vscode-input-background);
 	border: 1px solid var(--vscode-input-border);
+	font-family: inherit;
+	font-size: inherit;
 }
 
 .horus-editor-metadata,
@@ -149,6 +188,8 @@
 	background: var(--vscode-dropdown-background);
 	border: 1px solid var(--vscode-dropdown-border);
 	padding: 4px 6px;
+	font-family: inherit;
+	font-size: inherit;
 }
 
 .horus-editor-save {
@@ -180,6 +221,8 @@
 	overflow: auto;
 	border-top: 1px solid var(--vscode-panel-border);
 	padding-top: 8px;
+	scrollbar-color: var(--vscode-scrollbarSlider-background) transparent;
+	scrollbar-width: thin;
 }
 
 .horus-editor-mentions-list {
