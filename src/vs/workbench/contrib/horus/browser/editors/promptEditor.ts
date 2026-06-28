@@ -236,6 +236,8 @@ export class HorusPromptEditor extends EditorPane {
 		createChildButton.textContent = localize('horusPromptEditorCreateChild', "Create Child");
 		const linkPlanButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-toolbar-button')) as HTMLButtonElement;
 		linkPlanButton.textContent = localize('horusPromptEditorLinkPlan', "Link Plan");
+		const openPlanButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-toolbar-button')) as HTMLButtonElement;
+		openPlanButton.textContent = localize('horusPromptEditorOpenPlan', "Open Plan");
 		const syncPlanButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-toolbar-button')) as HTMLButtonElement;
 		syncPlanButton.textContent = localize('horusPromptEditorSyncPlan', "Sync Plan");
 		const comparePlanButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-toolbar-button')) as HTMLButtonElement;
@@ -263,6 +265,7 @@ export class HorusPromptEditor extends EditorPane {
 		this.contentDisposables.add(DOM.addDisposableListener(comparePromptButton, DOM.EventType.CLICK, () => this.commandService.executeCommand(HorusCommandId.OpenPromptVersionDiff, prompt.id)));
 		this.contentDisposables.add(DOM.addDisposableListener(createChildButton, DOM.EventType.CLICK, () => this.commandService.executeCommand(HorusCommandId.CreateChildPrompt, prompt.id)));
 		this.contentDisposables.add(DOM.addDisposableListener(linkPlanButton, DOM.EventType.CLICK, () => this.commandService.executeCommand(HorusCommandId.LinkPlanToPrompt, prompt.id)));
+		this.contentDisposables.add(DOM.addDisposableListener(openPlanButton, DOM.EventType.CLICK, () => this.commandService.executeCommand(HorusCommandId.OpenLinkedPlanFile, prompt.id)));
 		this.contentDisposables.add(DOM.addDisposableListener(syncPlanButton, DOM.EventType.CLICK, () => this.commandService.executeCommand(HorusCommandId.SyncLinkedPlan, prompt.id)));
 		this.contentDisposables.add(DOM.addDisposableListener(comparePlanButton, DOM.EventType.CLICK, () => this.commandService.executeCommand(HorusCommandId.OpenLinkedPlanDiff, prompt.id)));
 		this.applyViewMode();
