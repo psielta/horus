@@ -4,11 +4,17 @@ import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Dimension } from '../../../../../base/browser/dom.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
+import { IEditorConstructionOptions } from '../../../../../editor/browser/config/editorConfiguration.js';
+import { ILanguageService } from '../../../../../editor/common/languages/language.js';
+import { ITextModel } from '../../../../../editor/common/model.js';
+import { IModelService } from '../../../../../editor/common/services/model.js';
 import { localize } from '../../../../../nls.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { IHorusStorageService } from '../../../../../platform/horus/common/horusStorage.js';
 import { extractHorusFileMentions } from '../../../../../platform/horus/common/horusMentions.js';
 import { HorusFileMentionValidationResult, HorusPrompt, HorusPromptKind, HorusPromptStatus, HorusTargetAgent, HorusWorkspace } from '../../../../../platform/horus/common/horusTypes.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
@@ -25,7 +31,7 @@ interface HorusPromptEditorElements {
 	readonly targetAgent: HTMLSelectElement;
 	readonly kind: HTMLSelectElement;
 	readonly status: HTMLSelectElement;
-	readonly content: HTMLTextAreaElement;
+	readonly editorContainer: HTMLElement;
 	readonly saveButton: HTMLButtonElement;
 	readonly validation: HTMLElement;
 	readonly statusMessage: HTMLElement;
@@ -49,6 +55,9 @@ export class HorusPromptEditor extends EditorPane {
 
 	private container: HTMLElement | undefined;
 	private elements: HorusPromptEditorElements | undefined;
+	private codeEditor: CodeEditorWidget | undefined;
+	private promptModel: ITextModel | undefined;
+	private lastDimension: Dimension | undefined;
 	private currentInput: HorusPromptEditorInput | undefined;
 	private currentPrompt: HorusPrompt | undefined;
 	private currentWorkspace: HorusWorkspace | undefined;
@@ -60,6 +69,9 @@ export class HorusPromptEditor extends EditorPane {
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IThemeService themeService: IThemeService,
 		@IStorageService storageService: IStorageService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IModelService private readonly modelService: IModelService,
+		@ILanguageService private readonly languageService: ILanguageService,
 		@IHorusStorageService private readonly horusStorageService: IHorusStorageService,
 		@INotificationService private readonly notificationService: INotificationService
 	) {
@@ -77,7 +89,7 @@ export class HorusPromptEditor extends EditorPane {
 	}
 
 	override clearInput(): void {
-		this.contentDisposables.clear();
+		this.clearEditorContent();
 		this.mentionValidationScheduler.cancel();
 		this.elements = undefined;
 		this.currentInput = undefined;
@@ -93,7 +105,16 @@ export class HorusPromptEditor extends EditorPane {
 		super.clearInput();
 	}
 
-	override layout(_dimension: Dimension): void {
+	override layout(dimension: Dimension): void {
+		this.lastDimension = dimension;
+		this.codeEditor?.layout();
+	}
+
+	private clearEditorContent(): void {
+		this.codeEditor?.setModel(null);
+		this.codeEditor = undefined;
+		this.promptModel = undefined;
+		this.contentDisposables.clear();
 	}
 
 	private async loadPrompt(promptId: string, token: CancellationToken): Promise<void> {
@@ -101,7 +122,7 @@ export class HorusPromptEditor extends EditorPane {
 			return;
 		}
 
-		this.contentDisposables.clear();
+		this.clearEditorContent();
 		DOM.clearNode(this.container);
 		this.container.appendChild(DOM.$('.horus-editor-loading', undefined, localize('horusPromptEditorLoading', "Loading Horus prompt...")));
 
@@ -172,22 +193,71 @@ export class HorusPromptEditor extends EditorPane {
 		const saveButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-save')) as HTMLButtonElement;
 		saveButton.textContent = localize('horusPromptEditorSave', "Save Prompt");
 
-		const content = DOM.append(root, DOM.$('textarea.horus-editor-content')) as HTMLTextAreaElement;
-		content.value = prompt.content;
-		content.placeholder = localize('horusPromptEditorContentPlaceholder', "Write Markdown. Mention workspace files with @path/to/file.");
-		content.spellcheck = false;
+		const editorContainer = DOM.append(root, DOM.$('.horus-editor-content'));
+		editorContainer.setAttribute('aria-label', localize('horusPromptEditorContentAriaLabel', "Horus prompt Markdown editor. Mention workspace files with @path/to/file."));
+		this.createMarkdownEditor(editorContainer, prompt);
 
 		const validation = DOM.append(root, DOM.$('.horus-editor-mentions'));
 
-		this.elements = { root, title, targetAgent, kind, status, content, saveButton, validation, statusMessage, metadata };
+		this.elements = { root, title, targetAgent, kind, status, editorContainer, saveButton, validation, statusMessage, metadata };
 
-		for (const element of [title, targetAgent, kind, status, content]) {
+		for (const element of [title, targetAgent, kind, status]) {
 			this.contentDisposables.add(DOM.addDisposableListener(element, DOM.EventType.INPUT, () => this.onEditorChanged()));
 		}
 
 		this.contentDisposables.add(DOM.addDisposableListener(saveButton, DOM.EventType.CLICK, () => this.save().catch(error => this.notificationService.error(error))));
 		this.showStatus(localize('horusPromptEditorReady', "Ready."), false);
 		this.updateDirtyState();
+	}
+
+	private createMarkdownEditor(container: HTMLElement, prompt: HorusPrompt): void {
+		const options: IEditorConstructionOptions = {
+			ariaLabel: localize('horusPromptEditorAriaLabel', "Horus prompt Markdown editor"),
+			automaticLayout: false,
+			scrollBeyondLastLine: false,
+			wordWrap: 'on',
+			lineNumbers: 'on',
+			lineNumbersMinChars: 2,
+			glyphMargin: false,
+			folding: true,
+			minimap: { enabled: false },
+			overviewRulerLanes: 0,
+			renderWhitespace: 'selection',
+			scrollbar: {
+				verticalScrollbarSize: 14,
+				horizontal: 'auto',
+				useShadows: true,
+				verticalHasArrows: false,
+				horizontalHasArrows: false,
+				alwaysConsumeMouseWheel: false
+			}
+		};
+
+		const resource = this.currentInput?.resource;
+		let createdModel = false;
+		let model = resource ? this.modelService.getModel(resource) : null;
+		if (model) {
+			this.modelService.updateModel(model, prompt.content);
+		} else {
+			model = resource
+				? this.modelService.createModel(prompt.content, this.languageService.createById('markdown'), resource)
+				: this.modelService.createModel(prompt.content, this.languageService.createById('markdown'));
+			createdModel = true;
+		}
+
+		this.promptModel = model;
+
+		const codeEditor = this.instantiationService.createInstance(CodeEditorWidget, container, options, {
+			telemetryData: { source: 'horusPromptEditor' }
+		});
+		codeEditor.setModel(model);
+		this.codeEditor = codeEditor;
+		this.contentDisposables.add(codeEditor);
+		if (createdModel) {
+			this.contentDisposables.add(model);
+		}
+		this.contentDisposables.add(codeEditor.onDidChangeModelContent(() => this.onEditorChanged()));
+		this.lastDimension ? this.layout(this.lastDimension) : codeEditor.layout();
 	}
 
 	private renderSelect<T extends number>(
@@ -235,7 +305,7 @@ export class HorusPromptEditor extends EditorPane {
 			return;
 		}
 
-		const mentions = extractHorusFileMentions(this.elements.content.value);
+		const mentions = extractHorusFileMentions(this.getEditorContent());
 		if (!mentions.length) {
 			this.renderMentionValidation([]);
 			return;
@@ -325,8 +395,12 @@ export class HorusPromptEditor extends EditorPane {
 			targetAgent: Number(this.elements.targetAgent.value) as HorusTargetAgent,
 			kind: Number(this.elements.kind.value) as HorusPromptKind,
 			status: Number(this.elements.status.value) as HorusPromptStatus,
-			content: this.elements.content.value
+			content: this.getEditorContent()
 		};
+	}
+
+	private getEditorContent(): string {
+		return this.promptModel?.getValue() ?? this.codeEditor?.getValue() ?? '';
 	}
 
 	private toSnapshot(prompt: HorusPrompt): HorusPromptEditorSnapshot {

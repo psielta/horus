@@ -165,14 +165,14 @@
 	box-sizing: border-box;
 	flex: 1;
 	min-height: 240px;
-	resize: none;
-	padding: 12px;
 	color: var(--vscode-editor-foreground);
 	background: var(--vscode-editor-background);
 	border: 1px solid var(--vscode-input-border);
-	font-family: var(--vscode-editor-font-family);
-	font-size: var(--vscode-editor-font-size);
-	line-height: 1.5;
+	overflow: hidden;
+}
+
+.horus-editor-content .monaco-editor {
+	outline: none;
 }
 
 .horus-editor-mentions {
