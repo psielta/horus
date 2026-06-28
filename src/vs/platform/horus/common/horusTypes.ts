@@ -180,6 +180,11 @@ export interface HorusLinkedDocumentVersion extends HorusEntity {
 	readonly createdAtUtc: HorusDateTime;
 }
 
+export interface HorusLinkedDocumentSyncResult {
+	readonly document: HorusLinkedDocument;
+	readonly versionCreated: boolean;
+}
+
 export interface HorusWorkflowTemplate extends HorusAuditableEntity {
 	readonly name: string;
 	readonly isDefault: boolean;
@@ -354,6 +359,26 @@ export interface HorusUpdatePromptData {
 	readonly mentions?: readonly string[];
 }
 
+export interface HorusCreateLinkedDocumentData {
+	readonly promptId: HorusUuid;
+	readonly absolutePath: string;
+	readonly documentType?: HorusLinkedDocumentType;
+	readonly displayName?: string | null;
+	readonly pullRequestReference?: string | null;
+}
+
+export interface HorusLinkedDocumentQuery {
+	readonly promptId?: HorusUuid;
+	readonly workingDirectoryId?: HorusUuid;
+	readonly status?: HorusLinkedDocumentStatus;
+	readonly activePromptsOnly?: boolean;
+}
+
+export interface HorusUpdateLinkedDocumentStatusData {
+	readonly id: HorusUuid;
+	readonly status: HorusLinkedDocumentStatus;
+}
+
 export interface HorusResolvedPromptFileReferenceData {
 	readonly relativePath: string;
 	readonly rawMention: string;
@@ -364,6 +389,7 @@ export interface HorusResolvedPromptFileReferenceData {
 export interface HorusPromptQuery {
 	readonly workingDirectoryId?: HorusUuid;
 	readonly rootOnly?: boolean;
+	readonly parentPromptId?: HorusUuid | null;
 	readonly includeArchived?: boolean;
 }
 

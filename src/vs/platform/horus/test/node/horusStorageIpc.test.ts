@@ -46,8 +46,17 @@ suite('HorusIPC', () => {
 			resolveNativeWorkspaces: async () => [workspace],
 			listPrompts: async () => [],
 			getPrompt: async () => undefined,
+			listPromptVersions: async () => [],
+			getPromptVersion: async () => undefined,
 			createPrompt: async () => { throw new Error('not implemented'); },
 			updatePrompt: async () => prompt,
+			listLinkedDocuments: async () => [],
+			getLinkedDocumentForPrompt: async () => undefined,
+			listLinkedDocumentVersions: async () => [],
+			getLinkedDocumentVersion: async () => undefined,
+			linkPlanToPrompt: async () => { throw new Error('not implemented'); },
+			syncLinkedDocument: async () => { throw new Error('not implemented'); },
+			updateLinkedDocumentStatus: async () => { throw new Error('not implemented'); },
 			validateFileMentions: async () => []
 		};
 

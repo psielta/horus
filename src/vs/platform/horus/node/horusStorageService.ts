@@ -1,14 +1,17 @@
-import { join } from '../../../base/common/path.js';
+import { createHash } from 'crypto';
+import { readFile, stat } from 'fs/promises';
+import { basename, isAbsolute, join, normalize } from '../../../base/common/path.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
 import { Emitter } from '../../../base/common/event.js';
 import { INativeEnvironmentService } from '../../environment/common/environment.js';
 import { IFileService } from '../../files/common/files.js';
-import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptKind, HorusPromptQuery, HorusPromptStatus, HorusResolvedPromptFileReferenceData, HorusStorageHealth, HorusTargetAgent, HorusUpdatePromptData, HorusWorkspace } from '../common/horusTypes.js';
+import { HorusCreateLinkedDocumentData, HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentQuery, HorusLinkedDocumentStatus, HorusLinkedDocumentSyncResult, HorusLinkedDocumentType, HorusLinkedDocumentVersion, HorusLinkedDocumentVersionSource, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptKind, HorusPromptQuery, HorusPromptStatus, HorusPromptVersion, HorusResolvedPromptFileReferenceData, HorusStorageHealth, HorusTargetAgent, HorusUpdateLinkedDocumentStatusData, HorusUpdatePromptData, HorusWorkspace } from '../common/horusTypes.js';
 import { HorusDataChangeEvent, IHorusStorageService } from '../common/horusStorage.js';
 import { HorusBackupService } from './horusBackupService.js';
 import { HorusFileValidationService } from './horusFileValidationService.js';
 import { HorusMigrationRunner } from './horusMigrationRunner.js';
 import { horusMigrations } from './migrations/v001_initial.js';
+import { HorusLinkedDocumentRepository } from './repositories/linkedDocumentRepository.js';
 import { HorusPromptRepository } from './repositories/promptRepository.js';
 import { HorusWorkspaceRepository } from './repositories/workspaceRepository.js';
 import { HorusSQLiteConnection } from './horusSQLiteConnection.js';
@@ -42,6 +45,7 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 
 	private workspaceRepository: HorusWorkspaceRepository | undefined;
 	private promptRepository: HorusPromptRepository | undefined;
+	private linkedDocumentRepository: HorusLinkedDocumentRepository | undefined;
 	private ready: Promise<void> | undefined;
 
 	constructor(
@@ -130,6 +134,16 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 		return this.getPromptRepository().get(id);
 	}
 
+	async listPromptVersions(promptId: string): Promise<readonly HorusPromptVersion[]> {
+		await this.ensureReady();
+		return this.getPromptRepository().listVersions(promptId);
+	}
+
+	async getPromptVersion(promptId: string, versionNumber: number): Promise<HorusPromptVersion | undefined> {
+		await this.ensureReady();
+		return this.getPromptRepository().getVersion(promptId, versionNumber);
+	}
+
 	async createPrompt(data: HorusCreatePromptData): Promise<HorusPrompt> {
 		await this.ensureReady();
 		this.validatePromptFields(data.title, data.content);
@@ -157,6 +171,102 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 		const updated = await this.writeQueue.enqueue(() => this.getPromptRepository().update(data, fileReferences));
 		this.onDidChangeDataEmitter.fire({ kind: 'prompt', id: updated.id });
 		return updated;
+	}
+
+	async listLinkedDocuments(query?: HorusLinkedDocumentQuery): Promise<readonly HorusLinkedDocument[]> {
+		await this.ensureReady();
+		return this.getLinkedDocumentRepository().list(query);
+	}
+
+	async getLinkedDocumentForPrompt(promptId: string): Promise<HorusLinkedDocument | undefined> {
+		await this.ensureReady();
+		return this.getLinkedDocumentRepository().getByPrompt(promptId);
+	}
+
+	async listLinkedDocumentVersions(linkedDocumentId: string): Promise<readonly HorusLinkedDocumentVersion[]> {
+		await this.ensureReady();
+		return this.getLinkedDocumentRepository().listVersions(linkedDocumentId);
+	}
+
+	async getLinkedDocumentVersion(linkedDocumentId: string, versionNumber: number): Promise<HorusLinkedDocumentVersion | undefined> {
+		await this.ensureReady();
+		return this.getLinkedDocumentRepository().getVersion(linkedDocumentId, versionNumber);
+	}
+
+	async linkPlanToPrompt(data: HorusCreateLinkedDocumentData): Promise<HorusLinkedDocumentSyncResult> {
+		await this.ensureReady();
+		this.validateLinkedDocumentPath(data.absolutePath);
+
+		const prompt = await this.getPromptRepository().get(data.promptId);
+		if (!prompt) {
+			throw new Error('Prompt was not found.');
+		}
+		if (prompt.status === HorusPromptStatus.Archived) {
+			throw new Error('Archived prompts cannot monitor linked plans.');
+		}
+
+		const snapshot = await this.readLinkedDocumentFile(data.absolutePath);
+		const normalizedPath = normalize(data.absolutePath);
+		const result = await this.writeQueue.enqueue(() => this.getLinkedDocumentRepository().link({
+			promptId: data.promptId,
+			workingDirectoryId: prompt.workingDirectoryId,
+			absolutePath: normalizedPath,
+			absolutePathKey: this.toAbsolutePathKey(normalizedPath),
+			documentType: data.documentType ?? HorusLinkedDocumentType.ClaudeCodePlan,
+			displayName: data.displayName?.trim() || basename(normalizedPath),
+			pullRequestReference: data.pullRequestReference ?? null,
+			content: snapshot.content,
+			contentHash: snapshot.contentHash,
+			sizeBytes: snapshot.sizeBytes
+		}));
+
+		this.onDidChangeDataEmitter.fire({ kind: 'linkedDocument', id: result.document.id });
+		return result;
+	}
+
+	async syncLinkedDocument(linkedDocumentId: string, source: HorusLinkedDocumentVersionSource = HorusLinkedDocumentVersionSource.ManualRefresh): Promise<HorusLinkedDocumentSyncResult> {
+		await this.ensureReady();
+		const document = await this.getLinkedDocumentRepository().get(linkedDocumentId);
+		if (!document) {
+			throw new Error('Linked document was not found.');
+		}
+		if (document.status === HorusLinkedDocumentStatus.Paused) {
+			return { document, versionCreated: false };
+		}
+
+		const prompt = await this.getPromptRepository().get(document.promptId);
+		if (!prompt || prompt.status === HorusPromptStatus.Archived) {
+			const updated = await this.writeQueue.enqueue(() => this.getLinkedDocumentRepository().updateStatus(document.id, HorusLinkedDocumentStatus.Paused, 'Monitoring stopped because the prompt is archived or missing.'));
+			this.onDidChangeDataEmitter.fire({ kind: 'linkedDocument', id: updated.id });
+			return { document: updated, versionCreated: false };
+		}
+
+		try {
+			const snapshot = await this.readLinkedDocumentFile(document.absolutePath);
+			const result = await this.writeQueue.enqueue(() => this.getLinkedDocumentRepository().syncContent(document.id, {
+				content: snapshot.content,
+				contentHash: snapshot.contentHash,
+				sizeBytes: snapshot.sizeBytes,
+				source
+			}));
+			this.onDidChangeDataEmitter.fire({ kind: 'linkedDocument', id: result.document.id });
+			return result;
+		} catch (error) {
+			const updated = await this.writeQueue.enqueue(() => this.getLinkedDocumentRepository().updateStatus(document.id, HorusLinkedDocumentStatus.Error, String(error)));
+			this.onDidChangeDataEmitter.fire({ kind: 'linkedDocument', id: updated.id });
+			return { document: updated, versionCreated: false };
+		}
+	}
+
+	async updateLinkedDocumentStatus(data: HorusUpdateLinkedDocumentStatusData): Promise<HorusLinkedDocument> {
+		await this.ensureReady();
+		if (!this.isLinkedDocumentStatus(data.status)) {
+			throw new Error('Linked document status contains an invalid enum value.');
+		}
+
+		const document = await this.writeQueue.enqueue(() => this.getLinkedDocumentRepository().updateStatus(data.id, data.status, null));
+		this.onDidChangeDataEmitter.fire({ kind: 'linkedDocument', id: document.id });
+		return document;
 	}
 
 	validateFileMentions(request: HorusFileMentionValidationRequest): Promise<readonly HorusFileMentionValidationResult[]> {
@@ -195,6 +305,49 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 		return value === HorusPromptStatus.Draft || value === HorusPromptStatus.Active || value === HorusPromptStatus.Archived;
 	}
 
+	private isLinkedDocumentStatus(value: HorusLinkedDocumentStatus): boolean {
+		return value === HorusLinkedDocumentStatus.Draft
+			|| value === HorusLinkedDocumentStatus.Watching
+			|| value === HorusLinkedDocumentStatus.Paused
+			|| value === HorusLinkedDocumentStatus.Error;
+	}
+
+	private validateLinkedDocumentPath(absolutePath: string): void {
+		if (!absolutePath.trim()) {
+			throw new Error('Linked plan path is required.');
+		}
+
+		if (!isAbsolute(absolutePath)) {
+			throw new Error('Linked plan path must be absolute.');
+		}
+
+		const lower = absolutePath.toLowerCase();
+		if (!lower.endsWith('.md') && !lower.endsWith('.markdown')) {
+			throw new Error('Linked plans must be Markdown files.');
+		}
+	}
+
+	private async readLinkedDocumentFile(absolutePath: string): Promise<{ readonly content: string; readonly contentHash: string; readonly sizeBytes: number }> {
+		const [contentBuffer, fileStat] = await Promise.all([
+			readFile(absolutePath),
+			stat(absolutePath)
+		]);
+		if (!fileStat.isFile()) {
+			throw new Error('Linked plan path does not point to a file.');
+		}
+
+		const content = contentBuffer.toString('utf8');
+		return {
+			content,
+			contentHash: createHash('sha256').update(contentBuffer).digest('hex'),
+			sizeBytes: fileStat.size
+		};
+	}
+
+	private toAbsolutePathKey(absolutePath: string): string {
+		return normalize(absolutePath).replace(/\\/g, '/').toLowerCase();
+	}
+
 	private async resolvePromptFileReferences(workspace: HorusWorkspace, mentions: readonly string[]): Promise<readonly HorusResolvedPromptFileReferenceData[]> {
 		const seen = new Set<string>();
 		const uniqueMentions: string[] = [];
@@ -230,6 +383,7 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 				await this.migrationRunner.migrate();
 				this.workspaceRepository = new HorusWorkspaceRepository(this.connection);
 				this.promptRepository = new HorusPromptRepository(this.connection);
+				this.linkedDocumentRepository = new HorusLinkedDocumentRepository(this.connection);
 				this.onDidChangeDataEmitter.fire({ kind: 'storage' });
 			})();
 		}
@@ -251,5 +405,13 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 		}
 
 		return this.promptRepository;
+	}
+
+	private getLinkedDocumentRepository(): HorusLinkedDocumentRepository {
+		if (!this.linkedDocumentRepository) {
+			throw new Error('Horus linked document repository is not initialized');
+		}
+
+		return this.linkedDocumentRepository;
 	}
 }

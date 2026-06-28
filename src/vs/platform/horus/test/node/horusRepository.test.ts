@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { HorusPromptKind, HorusPromptStatus, HorusTargetAgent } from '../../common/horusTypes.js';
+import { HorusLinkedDocumentStatus, HorusLinkedDocumentType, HorusLinkedDocumentVersionSource, HorusPromptKind, HorusPromptStatus, HorusTargetAgent } from '../../common/horusTypes.js';
+import { HorusLinkedDocumentRepository } from '../../node/repositories/linkedDocumentRepository.js';
 import { HorusPromptRepository } from '../../node/repositories/promptRepository.js';
 import { HorusWorkspaceRepository } from '../../node/repositories/workspaceRepository.js';
 import { createHorusTestStore, HorusTestStore } from './horusTestUtils.js';
@@ -87,6 +88,105 @@ suite('HorusRepository', () => {
 			status: HorusPromptStatus.Draft,
 			rowVersion: prompt.rowVersion
 		}, []));
+	});
+
+	test('lists child prompts without including them in root prompt query', async () => {
+		store = await createHorusTestStore('repository-prompt-children');
+		const workspaceRepository = new HorusWorkspaceRepository(store.connection);
+		const promptRepository = new HorusPromptRepository(store.connection);
+		const workspace = await workspaceRepository.getOrCreate({ name: 'Repo', absolutePath: store.root });
+		const parent = await promptRepository.create({
+			workingDirectoryId: workspace.id,
+			title: 'Parent',
+			content: '# Parent'
+		});
+		const child = await promptRepository.create({
+			workingDirectoryId: workspace.id,
+			parentPromptId: parent.id,
+			title: 'Child',
+			content: '# Child'
+		});
+
+		const roots = await promptRepository.list({ workingDirectoryId: workspace.id, rootOnly: true });
+		const children = await promptRepository.list({ workingDirectoryId: workspace.id, parentPromptId: parent.id });
+
+		assert.deepStrictEqual(roots.map(prompt => prompt.id), [parent.id]);
+		assert.deepStrictEqual(children.map(prompt => prompt.id), [child.id]);
+	});
+
+	test('reads prompt versions for native diff providers', async () => {
+		store = await createHorusTestStore('repository-prompt-versions');
+		const workspaceRepository = new HorusWorkspaceRepository(store.connection);
+		const promptRepository = new HorusPromptRepository(store.connection);
+		const workspace = await workspaceRepository.getOrCreate({ name: 'Repo', absolutePath: store.root });
+		const prompt = await promptRepository.create({
+			workingDirectoryId: workspace.id,
+			title: 'Original',
+			content: '# Original'
+		});
+		const updated = await promptRepository.update({
+			id: prompt.id,
+			title: 'Updated',
+			content: '# Updated',
+			targetAgent: HorusTargetAgent.Codex,
+			kind: HorusPromptKind.General,
+			status: HorusPromptStatus.Active,
+			rowVersion: prompt.rowVersion
+		}, []);
+
+		const versions = await promptRepository.listVersions(prompt.id);
+		const initial = await promptRepository.getVersion(prompt.id, 1);
+		const latest = await promptRepository.getVersion(prompt.id, updated.currentVersion);
+
+		assert.deepStrictEqual(versions.map(version => version.versionNumber), [2, 1]);
+		assert.strictEqual(initial?.content, '# Original');
+		assert.strictEqual(latest?.content, '# Updated');
+	});
+
+	test('links markdown plan and versions changed content', async () => {
+		store = await createHorusTestStore('repository-linked-document');
+		const workspaceRepository = new HorusWorkspaceRepository(store.connection);
+		const promptRepository = new HorusPromptRepository(store.connection);
+		const linkedDocumentRepository = new HorusLinkedDocumentRepository(store.connection);
+		const workspace = await workspaceRepository.getOrCreate({ name: 'Repo', absolutePath: store.root });
+		const prompt = await promptRepository.create({
+			workingDirectoryId: workspace.id,
+			title: 'Prompt',
+			content: '# Prompt'
+		});
+
+		const linked = await linkedDocumentRepository.link({
+			promptId: prompt.id,
+			workingDirectoryId: workspace.id,
+			absolutePath: `${store.root}\\plan.md`,
+			absolutePathKey: `${store.root}/plan.md`.toLowerCase(),
+			documentType: HorusLinkedDocumentType.ClaudeCodePlan,
+			displayName: 'plan.md',
+			pullRequestReference: null,
+			content: '# Plan v1',
+			contentHash: 'hash-1',
+			sizeBytes: 9
+		});
+		const unchanged = await linkedDocumentRepository.syncContent(linked.document.id, {
+			content: '# Plan v1',
+			contentHash: 'hash-1',
+			sizeBytes: 9,
+			source: HorusLinkedDocumentVersionSource.FileWatcher
+		});
+		const changed = await linkedDocumentRepository.syncContent(linked.document.id, {
+			content: '# Plan v2',
+			contentHash: 'hash-2',
+			sizeBytes: 9,
+			source: HorusLinkedDocumentVersionSource.FileWatcher
+		});
+		const versions = await linkedDocumentRepository.listVersions(linked.document.id);
+
+		assert.strictEqual(linked.versionCreated, true);
+		assert.strictEqual(unchanged.versionCreated, false);
+		assert.strictEqual(changed.versionCreated, true);
+		assert.strictEqual(changed.document.currentVersion, 2);
+		assert.deepStrictEqual(versions.map(version => version.versionNumber), [2, 1]);
+		assert.strictEqual((await linkedDocumentRepository.getByPrompt(prompt.id))?.status, HorusLinkedDocumentStatus.Watching);
 	});
 
 	ensureNoDisposablesAreLeakedInTestSuite();

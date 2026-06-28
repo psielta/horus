@@ -1,6 +1,6 @@
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { IHorusPromptRepository } from '../../common/horusRepository.js';
-import { HORUS_SYSTEM_USER_ID, HorusCreatePromptData, HorusPrompt, HorusPromptKind, HorusPromptQuery, HorusPromptStatus, HorusResolvedPromptFileReferenceData, HorusTargetAgent, HorusUpdatePromptData } from '../../common/horusTypes.js';
+import { HORUS_SYSTEM_USER_ID, HorusCreatePromptData, HorusPrompt, HorusPromptKind, HorusPromptQuery, HorusPromptStatus, HorusPromptVersion, HorusResolvedPromptFileReferenceData, HorusTargetAgent, HorusUpdatePromptData } from '../../common/horusTypes.js';
 import { HorusSQLiteConnection, HorusSQLiteRow } from '../horusSQLiteConnection.js';
 
 interface PromptRow extends HorusSQLiteRow {
@@ -22,6 +22,19 @@ interface PromptRow extends HorusSQLiteRow {
 	readonly updated_at_utc: string;
 }
 
+interface PromptVersionRow extends HorusSQLiteRow {
+	readonly id: string;
+	readonly prompt_id: string;
+	readonly version_number: number;
+	readonly title: string;
+	readonly content: string;
+	readonly target_agent: number;
+	readonly kind: number;
+	readonly status: number;
+	readonly change_note: string | null;
+	readonly created_at_utc: string;
+}
+
 export class HorusPromptRepository implements IHorusPromptRepository {
 
 	constructor(private readonly connection: HorusSQLiteConnection) { }
@@ -37,6 +50,15 @@ export class HorusPromptRepository implements IHorusPromptRepository {
 
 		if (query.rootOnly) {
 			where.push('parent_prompt_id IS NULL');
+		}
+
+		if (query.parentPromptId !== undefined) {
+			if (query.parentPromptId === null) {
+				where.push('parent_prompt_id IS NULL');
+			} else {
+				where.push('parent_prompt_id = ?');
+				params.push(query.parentPromptId);
+			}
 		}
 
 		if (!query.includeArchived) {
@@ -57,6 +79,27 @@ export class HorusPromptRepository implements IHorusPromptRepository {
 	async get(id: string): Promise<HorusPrompt | undefined> {
 		const row = await this.connection.get<PromptRow>('SELECT * FROM prompts WHERE id = ?;', [id]);
 		return row ? this.toPrompt(row) : undefined;
+	}
+
+	async listVersions(promptId: string): Promise<readonly HorusPromptVersion[]> {
+		const rows = await this.connection.all<PromptVersionRow>(`
+			SELECT *
+			FROM prompt_versions
+			WHERE prompt_id = ?
+			ORDER BY version_number DESC;
+		`, [promptId]);
+
+		return rows.map(row => this.toPromptVersion(row));
+	}
+
+	async getVersion(promptId: string, versionNumber: number): Promise<HorusPromptVersion | undefined> {
+		const row = await this.connection.get<PromptVersionRow>(`
+			SELECT *
+			FROM prompt_versions
+			WHERE prompt_id = ? AND version_number = ?;
+		`, [promptId, versionNumber]);
+
+		return row ? this.toPromptVersion(row) : undefined;
 	}
 
 	async create(data: HorusCreatePromptData): Promise<HorusPrompt> {
@@ -219,6 +262,21 @@ export class HorusPromptRepository implements IHorusPromptRepository {
 			rowVersion: row.row_version,
 			createdAtUtc: row.created_at_utc,
 			updatedAtUtc: row.updated_at_utc
+		};
+	}
+
+	private toPromptVersion(row: PromptVersionRow): HorusPromptVersion {
+		return {
+			id: row.id,
+			promptId: row.prompt_id,
+			versionNumber: row.version_number,
+			title: row.title,
+			content: row.content,
+			targetAgent: row.target_agent,
+			kind: row.kind,
+			status: row.status,
+			changeNote: row.change_note,
+			createdAtUtc: row.created_at_utc
 		};
 	}
 }
