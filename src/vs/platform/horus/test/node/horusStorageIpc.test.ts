@@ -3,7 +3,7 @@ import { Event } from '../../../../base/common/event.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { IHorusStorageService } from '../../common/horusStorage.js';
 import { HorusStorageChannel } from '../../common/horusStorageIpc.js';
-import { HorusWorkspace } from '../../common/horusTypes.js';
+import { HorusPrompt, HorusPromptKind, HorusPromptStatus, HorusTargetAgent, HorusWorkspace } from '../../common/horusTypes.js';
 
 suite('HorusIPC', () => {
 
@@ -19,6 +19,24 @@ suite('HorusIPC', () => {
 			createdAtUtc: new Date().toISOString(),
 			updatedAtUtc: new Date().toISOString()
 		};
+		const prompt: HorusPrompt = {
+			id: 'prompt-id',
+			ownerId: 'owner-id',
+			workingDirectoryId: workspace.id,
+			parentPromptId: null,
+			futureTaskId: null,
+			taskNumber: null,
+			title: 'Prompt',
+			content: '# Prompt',
+			targetAgent: HorusTargetAgent.Codex,
+			kind: HorusPromptKind.General,
+			status: HorusPromptStatus.Draft,
+			currentVersion: 1,
+			boardRank: 0,
+			rowVersion: 1,
+			createdAtUtc: new Date().toISOString(),
+			updatedAtUtc: new Date().toISOString()
+		};
 		const service: IHorusStorageService = {
 			_serviceBrand: undefined,
 			onDidChangeData: Event.None,
@@ -29,11 +47,13 @@ suite('HorusIPC', () => {
 			listPrompts: async () => [],
 			getPrompt: async () => undefined,
 			createPrompt: async () => { throw new Error('not implemented'); },
+			updatePrompt: async () => prompt,
 			validateFileMentions: async () => []
 		};
 
 		const channel = new HorusStorageChannel(service);
 		assert.deepStrictEqual(await channel.call('', 'resolveNativeWorkspaces', [{ name: 'Repo', absolutePath: 'C:\\repo' }]), [workspace]);
+		assert.deepStrictEqual(await channel.call('', 'updatePrompt', { id: prompt.id }), prompt);
 		assert.deepStrictEqual(await channel.call('', 'getHealth'), { databasePath: 'db', journalMode: 'wal', foreignKeys: 1, userVersion: 1 });
 		assert.throws(() => channel.listen('', 'unknown'));
 		assert.throws(() => channel.call('', 'unknown'));

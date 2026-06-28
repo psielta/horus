@@ -3,7 +3,7 @@ import { Disposable } from '../../../base/common/lifecycle.js';
 import { Emitter } from '../../../base/common/event.js';
 import { INativeEnvironmentService } from '../../environment/common/environment.js';
 import { IFileService } from '../../files/common/files.js';
-import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusStorageHealth, HorusWorkspace } from '../common/horusTypes.js';
+import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptKind, HorusPromptQuery, HorusPromptStatus, HorusResolvedPromptFileReferenceData, HorusStorageHealth, HorusTargetAgent, HorusUpdatePromptData, HorusWorkspace } from '../common/horusTypes.js';
 import { HorusDataChangeEvent, IHorusStorageService } from '../common/horusStorage.js';
 import { HorusBackupService } from './horusBackupService.js';
 import { HorusFileValidationService } from './horusFileValidationService.js';
@@ -132,13 +132,95 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 
 	async createPrompt(data: HorusCreatePromptData): Promise<HorusPrompt> {
 		await this.ensureReady();
+		this.validatePromptFields(data.title, data.content);
 		const prompt = await this.writeQueue.enqueue(() => this.getPromptRepository().create(data));
 		this.onDidChangeDataEmitter.fire({ kind: 'prompt', id: prompt.id });
 		return prompt;
 	}
 
+	async updatePrompt(data: HorusUpdatePromptData): Promise<HorusPrompt> {
+		await this.ensureReady();
+		this.validatePromptFields(data.title, data.content);
+		this.validatePromptEnums(data);
+
+		const prompt = await this.getPromptRepository().get(data.id);
+		if (!prompt) {
+			throw new Error('Prompt was not found.');
+		}
+
+		const workspace = await this.getWorkspaceRepository().get(prompt.workingDirectoryId);
+		if (!workspace) {
+			throw new Error('Prompt workspace was not found.');
+		}
+
+		const fileReferences = await this.resolvePromptFileReferences(workspace, data.mentions ?? []);
+		const updated = await this.writeQueue.enqueue(() => this.getPromptRepository().update(data, fileReferences));
+		this.onDidChangeDataEmitter.fire({ kind: 'prompt', id: updated.id });
+		return updated;
+	}
+
 	validateFileMentions(request: HorusFileMentionValidationRequest): Promise<readonly HorusFileMentionValidationResult[]> {
 		return this.fileValidationService.validateMentions(request);
+	}
+
+	private validatePromptFields(title: string, content: string): void {
+		if (!title.trim()) {
+			throw new Error('Prompt title is required.');
+		}
+
+		if (title.trim().length > 220) {
+			throw new Error('Prompt title must be 220 characters or less.');
+		}
+
+		if (content.length > 200_000) {
+			throw new Error('Prompt content must be 200000 characters or less.');
+		}
+	}
+
+	private validatePromptEnums(data: HorusUpdatePromptData): void {
+		if (!this.isTargetAgent(data.targetAgent) || !this.isPromptKind(data.kind) || !this.isPromptStatus(data.status)) {
+			throw new Error('Prompt metadata contains an invalid enum value.');
+		}
+	}
+
+	private isTargetAgent(value: HorusTargetAgent): boolean {
+		return value === HorusTargetAgent.ClaudeCode || value === HorusTargetAgent.Codex || value === HorusTargetAgent.Grok;
+	}
+
+	private isPromptKind(value: HorusPromptKind): boolean {
+		return value === HorusPromptKind.General || value === HorusPromptKind.Plan || value === HorusPromptKind.Review || value === HorusPromptKind.Implementation;
+	}
+
+	private isPromptStatus(value: HorusPromptStatus): boolean {
+		return value === HorusPromptStatus.Draft || value === HorusPromptStatus.Active || value === HorusPromptStatus.Archived;
+	}
+
+	private async resolvePromptFileReferences(workspace: HorusWorkspace, mentions: readonly string[]): Promise<readonly HorusResolvedPromptFileReferenceData[]> {
+		const seen = new Set<string>();
+		const uniqueMentions: string[] = [];
+		for (const mention of mentions) {
+			const normalized = mention.trim().replace(/^@+/, '').replace(/\\/g, '/');
+			if (!normalized || seen.has(normalized.toLowerCase())) {
+				continue;
+			}
+
+			seen.add(normalized.toLowerCase());
+			uniqueMentions.push(normalized);
+		}
+
+		const validations = await this.fileValidationService.validateMentions({
+			workspacePath: workspace.absolutePath,
+			mentions: uniqueMentions,
+			respectGitignore: workspace.respectGitignore
+		});
+		const resolvedAtUtc = new Date().toISOString();
+
+		return validations.map(validation => ({
+			relativePath: validation.relativePath.replace(/\\/g, '/'),
+			rawMention: validation.rawMention,
+			exists: validation.exists,
+			resolvedAtUtc
+		}));
 	}
 
 	private ensureReady(): Promise<void> {

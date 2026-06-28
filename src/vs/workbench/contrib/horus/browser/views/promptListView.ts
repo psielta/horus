@@ -100,6 +100,10 @@ export class HorusPromptListView extends HorusViewPane {
 		this._register(DOM.addDisposableListener(item, DOM.EventType.CLICK, () => {
 			horusWorkbenchState.setSelectedPromptId(prompt.id);
 		}));
+		this._register(DOM.addDisposableListener(item, DOM.EventType.DBLCLICK, () => {
+			horusWorkbenchState.setSelectedPromptId(prompt.id);
+			this.commandService.executeCommand(HorusCommandId.OpenPrompt, prompt.id);
+		}));
 
 		return item;
 	}

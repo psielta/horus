@@ -6,16 +6,22 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IHorusStorageService } from '../../../../platform/horus/common/horusStorage.js';
 import { HorusWorkspace } from '../../../../platform/horus/common/horusTypes.js';
-import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
+import { EditorExtensions, IEditorFactoryRegistry, IEditorSerializer } from '../../../common/editor.js';
+import { EditorInput } from '../../../common/editor/editorInput.js';
+import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { Extensions as ViewExtensions, IViewContainersRegistry, IViewsRegistry, ViewContainerLocation } from '../../../common/views.js';
+import { HorusPromptEditor } from './editors/promptEditor.js';
+import { HorusPromptEditorInput } from './editors/promptEditorInput.js';
 import { HorusCommandId, HorusContext, HORUS_PROMPT_DETAIL_VIEW_ID, HORUS_PROMPTS_VIEW_ID, HORUS_VIEW_CONTAINER_ID, HORUS_WORKSPACES_VIEW_ID } from '../common/horus.js';
 import { resolveNativeHorusWorkspaces } from './horusNativeWorkspaces.js';
 import { horusWorkbenchState } from './horusWorkbenchState.js';
@@ -26,6 +32,40 @@ import { HorusWorkspaceListView } from './views/workspaceListView.js';
 const horusViewIcon = registerIcon('horus-view-icon', Codicon.eye, localize('horusViewIcon', 'View icon of the Horus view.'));
 const horusCategory = localize2('horusCategory', "Horus");
 const openFolderCommandId = 'workbench.action.files.openFolder';
+
+class HorusPromptEditorInputSerializer implements IEditorSerializer {
+
+	canSerialize(editorInput: EditorInput): boolean {
+		return editorInput instanceof HorusPromptEditorInput;
+	}
+
+	serialize(editorInput: HorusPromptEditorInput): string {
+		return JSON.stringify({ promptId: editorInput.promptId, name: editorInput.getName() });
+	}
+
+	deserialize(_instantiationService: IInstantiationService, serializedEditor: string): HorusPromptEditorInput | undefined {
+		try {
+			const data = JSON.parse(serializedEditor) as { promptId?: string; name?: string };
+			return data.promptId ? new HorusPromptEditorInput(data.promptId, data.name) : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+}
+
+Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory)
+	.registerEditorSerializer(HorusPromptEditorInput.ID, HorusPromptEditorInputSerializer);
+
+Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
+	EditorPaneDescriptor.create(
+		HorusPromptEditor,
+		HorusPromptEditor.ID,
+		localize('horusPromptEditor', "Horus Prompt Editor")
+	),
+	[
+		new SyncDescriptor(HorusPromptEditorInput)
+	]
+);
 
 const viewContainer = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewContainersRegistry).registerViewContainer({
 	id: HORUS_VIEW_CONTAINER_ID,
@@ -205,10 +245,46 @@ registerAction2(class extends Action2 {
 			});
 			horusWorkbenchState.setSelectedWorkspaceId(workspace.id);
 			horusWorkbenchState.setSelectedPromptId(prompt.id);
+			await commandService.executeCommand(HorusCommandId.OpenPrompt, prompt.id);
 			notificationService.info(localize('horusPromptCreated', "Horus prompt created: {0}", title));
 		} catch (error) {
 			notificationService.error(error);
 		}
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: HorusCommandId.OpenPrompt,
+			title: localize2('horusOpenPromptCommand', "Horus: Open Prompt"),
+			category: horusCategory,
+			f1: true,
+			precondition: HorusContext.PromptSelected
+		});
+	}
+
+	async run(accessor: ServicesAccessor, promptId?: string): Promise<void> {
+		const notificationService = accessor.get(INotificationService);
+		const editorService = accessor.get(IEditorService);
+		const horusStorageService = accessor.get(IHorusStorageService);
+
+		const selectedPromptId = promptId ?? horusWorkbenchState.getSelectedPromptId();
+		if (!selectedPromptId) {
+			notificationService.info(localize('horusSelectPromptFirst', "Select a Horus prompt first."));
+			return;
+		}
+
+		const prompt = await horusStorageService.getPrompt(selectedPromptId);
+		if (!prompt) {
+			notificationService.error(localize('horusOpenPromptMissing', "The selected Horus prompt no longer exists."));
+			horusWorkbenchState.setSelectedPromptId(undefined);
+			return;
+		}
+
+		horusWorkbenchState.setSelectedWorkspaceId(prompt.workingDirectoryId);
+		horusWorkbenchState.setSelectedPromptId(prompt.id);
+		await editorService.openEditor(new HorusPromptEditorInput(prompt.id, prompt.title), { pinned: true });
 	}
 });
 

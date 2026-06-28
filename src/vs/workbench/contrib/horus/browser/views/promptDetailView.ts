@@ -62,6 +62,8 @@ export class HorusPromptDetailView extends HorusViewPane {
 			return;
 		}
 
+		this.horusBody.appendChild(this.renderButton(localize('horusOpenPromptEditor', "Open Prompt Editor"), () => this.commandService.executeCommand(HorusCommandId.OpenPrompt, prompt.id)));
+
 		const title = DOM.append(this.horusBody, DOM.$('.horus-detail-title'));
 		title.textContent = prompt.title;
 

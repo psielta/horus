@@ -2,7 +2,7 @@ import { Event } from '../../../base/common/event.js';
 import { CancellationToken } from '../../../base/common/cancellation.js';
 import { IServerChannel } from '../../../base/parts/ipc/common/ipc.js';
 import { HorusDataChangeEvent, IHorusStorageService } from './horusStorage.js';
-import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusStorageHealth, HorusWorkspace } from './horusTypes.js';
+import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusStorageHealth, HorusUpdatePromptData, HorusWorkspace } from './horusTypes.js';
 
 export class HorusStorageChannel implements IServerChannel {
 
@@ -33,6 +33,8 @@ export class HorusStorageChannel implements IServerChannel {
 				return this.service.getPrompt(arg as string) as Promise<T>;
 			case 'createPrompt':
 				return this.service.createPrompt(arg as HorusCreatePromptData) as Promise<T>;
+			case 'updatePrompt':
+				return this.service.updatePrompt(arg as HorusUpdatePromptData) as Promise<T>;
 			case 'validateFileMentions':
 				return this.service.validateFileMentions(arg as HorusFileMentionValidationRequest) as Promise<T>;
 		}
@@ -50,5 +52,6 @@ export type HorusStorageChannelShape = {
 	listPrompts(query?: HorusPromptQuery): Promise<readonly HorusPrompt[]>;
 	getPrompt(id: string): Promise<HorusPrompt | undefined>;
 	createPrompt(data: HorusCreatePromptData): Promise<HorusPrompt>;
+	updatePrompt(data: HorusUpdatePromptData): Promise<HorusPrompt>;
 	validateFileMentions(request: HorusFileMentionValidationRequest): Promise<readonly HorusFileMentionValidationResult[]>;
 };

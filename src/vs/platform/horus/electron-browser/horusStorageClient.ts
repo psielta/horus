@@ -1,7 +1,7 @@
 import { Event } from '../../../base/common/event.js';
 import { IChannel } from '../../../base/parts/ipc/common/ipc.js';
 import { HorusDataChangeEvent, IHorusStorageService } from '../common/horusStorage.js';
-import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusStorageHealth, HorusWorkspace } from '../common/horusTypes.js';
+import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusStorageHealth, HorusUpdatePromptData, HorusWorkspace } from '../common/horusTypes.js';
 
 export class HorusStorageChannelClient implements IHorusStorageService {
 
@@ -39,6 +39,10 @@ export class HorusStorageChannelClient implements IHorusStorageService {
 
 	createPrompt(data: HorusCreatePromptData): Promise<HorusPrompt> {
 		return this.channel.call('createPrompt', data);
+	}
+
+	updatePrompt(data: HorusUpdatePromptData): Promise<HorusPrompt> {
+		return this.channel.call('updatePrompt', data);
 	}
 
 	validateFileMentions(request: HorusFileMentionValidationRequest): Promise<readonly HorusFileMentionValidationResult[]> {

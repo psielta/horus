@@ -339,6 +339,26 @@ export interface HorusCreatePromptData {
 	readonly kind?: HorusPromptKind;
 	readonly status?: HorusPromptStatus;
 	readonly changeNote?: string | null;
+	readonly mentions?: readonly string[];
+}
+
+export interface HorusUpdatePromptData {
+	readonly id: HorusUuid;
+	readonly title: string;
+	readonly content: string;
+	readonly targetAgent: HorusTargetAgent;
+	readonly kind: HorusPromptKind;
+	readonly status: HorusPromptStatus;
+	readonly rowVersion: number;
+	readonly changeNote?: string | null;
+	readonly mentions?: readonly string[];
+}
+
+export interface HorusResolvedPromptFileReferenceData {
+	readonly relativePath: string;
+	readonly rawMention: string;
+	readonly exists: boolean;
+	readonly resolvedAtUtc: HorusDateTime;
 }
 
 export interface HorusPromptQuery {

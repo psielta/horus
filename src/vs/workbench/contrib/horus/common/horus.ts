@@ -9,6 +9,7 @@ export const HORUS_PROMPT_DETAIL_VIEW_ID = 'workbench.horus.promptDetail';
 export const enum HorusCommandId {
 	CreateWorkspace = 'horus.createWorkspace',
 	CreatePrompt = 'horus.createPrompt',
+	OpenPrompt = 'horus.openPrompt',
 	Refresh = 'horus.refresh'
 }
 

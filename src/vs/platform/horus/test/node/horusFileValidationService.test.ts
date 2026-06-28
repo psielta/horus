@@ -5,6 +5,7 @@ import { join } from '../../../../base/common/path.js';
 import { URI } from '../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { IFileService } from '../../../files/common/files.js';
+import { extractHorusFileMentions } from '../../common/horusMentions.js';
 import { HorusFileValidationService } from '../../node/horusFileValidationService.js';
 
 suite('HorusFileMention', () => {
@@ -37,6 +38,10 @@ suite('HorusFileMention', () => {
 		assert.strictEqual(results[2].exists, false);
 		assert.strictEqual(results[3].exists, false);
 		assert.strictEqual(results[4].exists, false);
+	});
+
+	test('extracts unique markdown file mentions', () => {
+		assert.deepStrictEqual(extractHorusFileMentions('Use @src/index.ts, @src/index.ts and @"docs/plan.md".'), ['src/index.ts', 'docs/plan.md']);
 	});
 
 	function createFileService(): IFileService {

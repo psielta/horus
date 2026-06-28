@@ -1,5 +1,6 @@
 import * as assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+import { HorusPromptKind, HorusPromptStatus, HorusTargetAgent } from '../../common/horusTypes.js';
 import { HorusPromptRepository } from '../../node/repositories/promptRepository.js';
 import { HorusWorkspaceRepository } from '../../node/repositories/workspaceRepository.js';
 import { createHorusTestStore, HorusTestStore } from './horusTestUtils.js';
@@ -42,6 +43,50 @@ suite('HorusRepository', () => {
 		assert.strictEqual(prompts.length, 1);
 		assert.strictEqual(prompts[0].id, prompt.id);
 		assert.strictEqual(versions?.count, 1);
+	});
+
+	test('updates prompt with optimistic row version, new version and file references', async () => {
+		store = await createHorusTestStore('repository-prompt-update');
+		const workspaceRepository = new HorusWorkspaceRepository(store.connection);
+		const promptRepository = new HorusPromptRepository(store.connection);
+		const workspace = await workspaceRepository.getOrCreate({ name: 'Repo', absolutePath: store.root });
+		const prompt = await promptRepository.create({
+			workingDirectoryId: workspace.id,
+			title: 'Original',
+			content: '# Original'
+		});
+
+		const updated = await promptRepository.update({
+			id: prompt.id,
+			title: 'Updated',
+			content: '# Updated\n@src/index.ts',
+			targetAgent: HorusTargetAgent.Codex,
+			kind: HorusPromptKind.Implementation,
+			status: HorusPromptStatus.Active,
+			rowVersion: prompt.rowVersion,
+			mentions: ['src/index.ts']
+		}, [
+			{ relativePath: 'src/index.ts', rawMention: 'src/index.ts', exists: true, resolvedAtUtc: new Date().toISOString() }
+		]);
+
+		const versionCount = await store.connection.get<{ readonly count: number }>('SELECT COUNT(*) AS count FROM prompt_versions WHERE prompt_id = ?;', [prompt.id], 'read');
+		const reference = await store.connection.get<{ readonly relative_path: string; readonly file_exists: number }>('SELECT relative_path, file_exists FROM prompt_file_references WHERE prompt_id = ?;', [prompt.id], 'read');
+
+		assert.strictEqual(updated.title, 'Updated');
+		assert.strictEqual(updated.currentVersion, 2);
+		assert.strictEqual(updated.rowVersion, 2);
+		assert.strictEqual(versionCount?.count, 2);
+		assert.strictEqual(reference?.relative_path, 'src/index.ts');
+		assert.strictEqual(reference?.file_exists, 1);
+		await assert.rejects(() => promptRepository.update({
+			id: prompt.id,
+			title: 'Conflict',
+			content: '',
+			targetAgent: HorusTargetAgent.Codex,
+			kind: HorusPromptKind.General,
+			status: HorusPromptStatus.Draft,
+			rowVersion: prompt.rowVersion
+		}, []));
 	});
 
 	ensureNoDisposablesAreLeakedInTestSuite();

@@ -1,6 +1,6 @@
 import { Event } from '../../../base/common/event.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
-import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusStorageHealth, HorusWorkspace } from './horusTypes.js';
+import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusStorageHealth, HorusUpdatePromptData, HorusWorkspace } from './horusTypes.js';
 
 export const HORUS_STORAGE_CHANNEL = 'horus/storage';
 
@@ -22,5 +22,6 @@ export interface IHorusStorageService {
 	listPrompts(query?: HorusPromptQuery): Promise<readonly HorusPrompt[]>;
 	getPrompt(id: string): Promise<HorusPrompt | undefined>;
 	createPrompt(data: HorusCreatePromptData): Promise<HorusPrompt>;
+	updatePrompt(data: HorusUpdatePromptData): Promise<HorusPrompt>;
 	validateFileMentions(request: HorusFileMentionValidationRequest): Promise<readonly HorusFileMentionValidationResult[]>;
 }

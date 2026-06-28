@@ -77,3 +77,128 @@
 	border: 1px solid var(--vscode-panel-border);
 	border-radius: 3px;
 }
+
+.horus-prompt-editor {
+	box-sizing: border-box;
+	height: 100%;
+	color: var(--vscode-editor-foreground);
+	background: var(--vscode-editor-background);
+}
+
+.horus-editor-root {
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+	padding: 12px;
+	gap: 10px;
+}
+
+.horus-editor-header,
+.horus-editor-controls,
+.horus-editor-toolbar {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.horus-editor-header {
+	flex-wrap: wrap;
+}
+
+.horus-editor-title {
+	box-sizing: border-box;
+	min-width: 280px;
+	flex: 1;
+	padding: 6px 8px;
+	color: var(--vscode-input-foreground);
+	background: var(--vscode-input-background);
+	border: 1px solid var(--vscode-input-border);
+}
+
+.horus-editor-metadata,
+.horus-editor-status,
+.horus-editor-mentions {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.horus-editor-status.error {
+	color: var(--vscode-errorForeground);
+}
+
+.horus-editor-controls {
+	flex-wrap: wrap;
+}
+
+.horus-editor-field {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 140px;
+}
+
+.horus-editor-label {
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+}
+
+.horus-editor-select {
+	color: var(--vscode-dropdown-foreground);
+	background: var(--vscode-dropdown-background);
+	border: 1px solid var(--vscode-dropdown-border);
+	padding: 4px 6px;
+}
+
+.horus-editor-save {
+	width: auto;
+	margin: 0;
+}
+
+.horus-editor-save:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+.horus-editor-content {
+	box-sizing: border-box;
+	flex: 1;
+	min-height: 240px;
+	resize: none;
+	padding: 12px;
+	color: var(--vscode-editor-foreground);
+	background: var(--vscode-editor-background);
+	border: 1px solid var(--vscode-input-border);
+	font-family: var(--vscode-editor-font-family);
+	font-size: var(--vscode-editor-font-size);
+	line-height: 1.5;
+}
+
+.horus-editor-mentions {
+	max-height: 120px;
+	overflow: auto;
+	border-top: 1px solid var(--vscode-panel-border);
+	padding-top: 8px;
+}
+
+.horus-editor-mentions-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin-top: 6px;
+}
+
+.horus-editor-mention.valid {
+	color: var(--vscode-testing-iconPassed);
+}
+
+.horus-editor-mention.missing {
+	color: var(--vscode-testing-iconFailed);
+}
+
+.horus-editor-loading,
+.horus-editor-empty {
+	padding: 16px;
+	color: var(--vscode-descriptionForeground);
+}

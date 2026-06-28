@@ -1,6 +1,6 @@
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { IHorusPromptRepository } from '../../common/horusRepository.js';
-import { HORUS_SYSTEM_USER_ID, HorusCreatePromptData, HorusPrompt, HorusPromptKind, HorusPromptQuery, HorusPromptStatus, HorusTargetAgent } from '../../common/horusTypes.js';
+import { HORUS_SYSTEM_USER_ID, HorusCreatePromptData, HorusPrompt, HorusPromptKind, HorusPromptQuery, HorusPromptStatus, HorusResolvedPromptFileReferenceData, HorusTargetAgent, HorusUpdatePromptData } from '../../common/horusTypes.js';
 import { HorusSQLiteConnection, HorusSQLiteRow } from '../horusSQLiteConnection.js';
 
 interface PromptRow extends HorusSQLiteRow {
@@ -112,6 +112,90 @@ export class HorusPromptRepository implements IHorusPromptRepository {
 		const prompt = await this.get(id);
 		if (!prompt) {
 			throw new Error(`Failed to load created Horus prompt: ${id}`);
+		}
+
+		return prompt;
+	}
+
+	async update(data: HorusUpdatePromptData, fileReferences: readonly HorusResolvedPromptFileReferenceData[]): Promise<HorusPrompt> {
+		const existing = await this.get(data.id);
+		if (!existing) {
+			throw new Error('Prompt was not found.');
+		}
+
+		if (existing.rowVersion !== data.rowVersion) {
+			throw new Error('The prompt was changed by another operation. Reload it before saving.');
+		}
+
+		const now = new Date().toISOString();
+		const title = data.title.trim();
+		const nextVersion = existing.currentVersion + 1;
+		const nextRowVersion = existing.rowVersion + 1;
+
+		await this.connection.transaction(async () => {
+			await this.connection.run(`
+				UPDATE prompts
+				SET title = ?,
+					content = ?,
+					target_agent = ?,
+					kind = ?,
+					status = ?,
+					current_version = ?,
+					row_version = ?,
+					updated_at_utc = ?
+				WHERE id = ? AND row_version = ?;
+			`, [
+				title,
+				data.content,
+				data.targetAgent,
+				data.kind,
+				data.status,
+				nextVersion,
+				nextRowVersion,
+				now,
+				data.id,
+				data.rowVersion
+			]);
+
+			await this.connection.run('DELETE FROM prompt_file_references WHERE prompt_id = ?;', [data.id]);
+
+			for (const reference of fileReferences) {
+				await this.connection.run(`
+					INSERT INTO prompt_file_references (
+						id, prompt_id, relative_path, raw_mention, file_exists, resolved_at_utc
+					) VALUES (?, ?, ?, ?, ?, ?);
+				`, [
+					generateUuid(),
+					data.id,
+					reference.relativePath,
+					reference.rawMention,
+					reference.exists ? 1 : 0,
+					reference.resolvedAtUtc
+				]);
+			}
+
+			await this.connection.run(`
+				INSERT INTO prompt_versions (
+					id, prompt_id, version_number, title, content, target_agent, kind, status,
+					change_note, created_at_utc
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+			`, [
+				generateUuid(),
+				data.id,
+				nextVersion,
+				title,
+				data.content,
+				data.targetAgent,
+				data.kind,
+				data.status,
+				data.changeNote ?? 'Updated',
+				now
+			]);
+		});
+
+		const prompt = await this.get(data.id);
+		if (!prompt) {
+			throw new Error(`Failed to load updated Horus prompt: ${data.id}`);
 		}
 
 		return prompt;
