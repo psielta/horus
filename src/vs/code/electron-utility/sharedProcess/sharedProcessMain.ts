@@ -145,6 +145,9 @@ import { PlaywrightChannel } from '../../../platform/browserView/node/playwright
 import { AgentNetworkFilterService } from '../../../platform/networkFilter/common/networkFilterService.js';
 import { ILocalGitService } from '../../../platform/git/common/localGitService.js';
 import { LocalGitService } from '../../../platform/git/node/localGitService.js';
+import { HORUS_STORAGE_CHANNEL, IHorusStorageService } from '../../../platform/horus/common/horusStorage.js';
+import { HorusStorageChannel } from '../../../platform/horus/common/horusStorageIpc.js';
+import { HorusStorageService } from '../../../platform/horus/node/horusStorageService.js';
 
 class SharedProcessMain extends Disposable implements IClientConnectionFilter {
 
@@ -418,6 +421,9 @@ class SharedProcessMain extends Disposable implements IClientConnectionFilter {
 		// Local Git
 		services.set(ILocalGitService, new SyncDescriptor(LocalGitService, undefined, false /* proxied to other processes */));
 
+		// Horus storage
+		services.set(IHorusStorageService, new SyncDescriptor(HorusStorageService, undefined, true));
+
 		// SSH Remote Agent Host
 		services.set(ISSHRemoteAgentHostMainService, new SyncDescriptor(SSHRemoteAgentHostMainService, undefined, true));
 
@@ -505,6 +511,10 @@ class SharedProcessMain extends Disposable implements IClientConnectionFilter {
 		// Local Git
 		const localGitChannel = ProxyChannel.fromService(accessor.get(ILocalGitService), this._store);
 		this.server.registerChannel('localGit', localGitChannel);
+
+		// Horus storage
+		const horusStorageChannel = new HorusStorageChannel(accessor.get(IHorusStorageService));
+		this.server.registerChannel(HORUS_STORAGE_CHANNEL, horusStorageChannel);
 
 		// SSH Remote Agent Host
 		const sshRemoteAgentHostChannel = ProxyChannel.fromService(accessor.get(ISSHRemoteAgentHostMainService), this._store);
