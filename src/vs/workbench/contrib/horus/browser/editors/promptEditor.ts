@@ -61,6 +61,13 @@ interface HorusPromptEditorSnapshot {
 
 type HorusPromptEditorViewMode = 'editor' | 'preview' | 'split';
 
+const horusFileMentionExcludePattern = {
+	'.git': true,
+	'.git/**': true,
+	'**/.git': true,
+	'**/.git/**': true
+};
+
 export class HorusPromptEditor extends EditorPane {
 
 	static readonly ID = HorusPromptEditorInput.EDITOR_ID;
@@ -351,6 +358,7 @@ export class HorusPromptEditor extends EditorPane {
 				disregardGlobalIgnoreFiles: workspace.respectGitignore === false
 			}],
 			filePattern: pathPrefix || undefined,
+			excludePattern: horusFileMentionExcludePattern,
 			maxResults: 100,
 			sortByScore: true
 		}, token);
@@ -363,7 +371,7 @@ export class HorusPromptEditor extends EditorPane {
 		const suggestions: CompletionItem[] = [];
 		for (const match of searchResult.results) {
 			const relativePath = resourceRelativePath(workspaceRoot, match.resource)?.replace(/\\/g, '/');
-			if (!relativePath || relativePath.startsWith('../') || seen.has(relativePath.toLowerCase())) {
+			if (!relativePath || relativePath.startsWith('../') || this.isExcludedFileMentionPath(relativePath) || seen.has(relativePath.toLowerCase())) {
 				continue;
 			}
 
@@ -380,6 +388,13 @@ export class HorusPromptEditor extends EditorPane {
 		}
 
 		return suggestions;
+	}
+
+	private isExcludedFileMentionPath(relativePath: string): boolean {
+		return relativePath === '.git'
+			|| relativePath.startsWith('.git/')
+			|| relativePath.endsWith('/.git')
+			|| relativePath.includes('/.git/');
 	}
 
 	private renderViewModeButtons(parent: HTMLElement): ReadonlyMap<HorusPromptEditorViewMode, HTMLButtonElement> {
