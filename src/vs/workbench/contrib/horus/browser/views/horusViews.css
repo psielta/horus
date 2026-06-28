@@ -11,28 +11,33 @@
 }
 
 .horus-view-pane::-webkit-scrollbar,
-.horus-editor-mentions::-webkit-scrollbar {
+.horus-editor-mentions::-webkit-scrollbar,
+.horus-editor-preview::-webkit-scrollbar {
 	width: 10px;
 	height: 10px;
 }
 
 .horus-view-pane::-webkit-scrollbar-corner,
-.horus-editor-mentions::-webkit-scrollbar-corner {
+.horus-editor-mentions::-webkit-scrollbar-corner,
+.horus-editor-preview::-webkit-scrollbar-corner {
 	background-color: transparent;
 }
 
 .horus-view-pane::-webkit-scrollbar-thumb,
-.horus-editor-mentions::-webkit-scrollbar-thumb {
+.horus-editor-mentions::-webkit-scrollbar-thumb,
+.horus-editor-preview::-webkit-scrollbar-thumb {
 	background-color: var(--vscode-scrollbarSlider-background);
 }
 
 .horus-view-pane::-webkit-scrollbar-thumb:hover,
-.horus-editor-mentions::-webkit-scrollbar-thumb:hover {
+.horus-editor-mentions::-webkit-scrollbar-thumb:hover,
+.horus-editor-preview::-webkit-scrollbar-thumb:hover {
 	background-color: var(--vscode-scrollbarSlider-hoverBackground);
 }
 
 .horus-view-pane::-webkit-scrollbar-thumb:active,
-.horus-editor-mentions::-webkit-scrollbar-thumb:active {
+.horus-editor-mentions::-webkit-scrollbar-thumb:active,
+.horus-editor-preview::-webkit-scrollbar-thumb:active {
 	background-color: var(--vscode-scrollbarSlider-activeBackground);
 }
 
@@ -140,6 +145,10 @@
 	align-items: center;
 }
 
+.horus-editor-toolbar {
+	flex-wrap: wrap;
+}
+
 .horus-editor-header {
 	flex-wrap: wrap;
 }
@@ -165,6 +174,11 @@
 
 .horus-editor-status.error {
 	color: var(--vscode-errorForeground);
+}
+
+.horus-editor-status {
+	flex: 1;
+	min-width: 160px;
 }
 
 .horus-editor-controls {
@@ -202,6 +216,45 @@
 	cursor: default;
 }
 
+.horus-editor-view-modes {
+	display: flex;
+	overflow: hidden;
+	border: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder));
+	border-radius: 2px;
+}
+
+.horus-editor-view-mode {
+	padding: 4px 8px;
+	color: var(--vscode-button-secondaryForeground);
+	background: var(--vscode-button-secondaryBackground);
+	border: 0;
+	border-left: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder));
+	cursor: pointer;
+	font-family: inherit;
+	font-size: inherit;
+	line-height: 18px;
+}
+
+.horus-editor-view-mode:first-child {
+	border-left: 0;
+}
+
+.horus-editor-view-mode:hover {
+	background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.horus-editor-view-mode.active {
+	color: var(--vscode-button-foreground);
+	background: var(--vscode-button-background);
+}
+
+.horus-editor-body {
+	display: flex;
+	flex: 1;
+	min-height: 240px;
+	gap: 8px;
+}
+
 .horus-editor-content {
 	box-sizing: border-box;
 	flex: 1;
@@ -214,6 +267,39 @@
 
 .horus-editor-content .monaco-editor {
 	outline: none;
+}
+
+.horus-editor-preview {
+	box-sizing: border-box;
+	flex: 1;
+	min-width: 0;
+	min-height: 240px;
+	padding: 12px 18px;
+	overflow: auto;
+	color: var(--vscode-editor-foreground);
+	background: var(--vscode-editor-background);
+	border: 1px solid var(--vscode-input-border);
+	scrollbar-color: var(--vscode-scrollbarSlider-background) transparent;
+	scrollbar-width: thin;
+}
+
+.horus-editor-body.editor-only .horus-editor-content,
+.horus-editor-body.preview-only .horus-editor-preview {
+	flex-basis: 100%;
+}
+
+.horus-editor-preview.rendered-markdown {
+	font-family: var(--vscode-font-family);
+	font-size: var(--vscode-font-size);
+	line-height: 1.5;
+}
+
+.horus-editor-preview.rendered-markdown > :first-child {
+	margin-top: 0;
+}
+
+.horus-editor-preview.rendered-markdown > :last-child {
+	margin-bottom: 0;
 }
 
 .horus-editor-mentions {

@@ -3,6 +3,7 @@ import * as DOM from '../../../../../base/browser/dom.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Dimension } from '../../../../../base/browser/dom.js';
+import { MarkdownString } from '../../../../../base/common/htmlContent.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
 import { IEditorConstructionOptions } from '../../../../../editor/browser/config/editorConfiguration.js';
@@ -15,6 +16,7 @@ import { IHorusStorageService } from '../../../../../platform/horus/common/horus
 import { extractHorusFileMentions } from '../../../../../platform/horus/common/horusMentions.js';
 import { HorusFileMentionValidationResult, HorusPrompt, HorusPromptKind, HorusPromptStatus, HorusTargetAgent, HorusWorkspace } from '../../../../../platform/horus/common/horusTypes.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { IMarkdownRendererService } from '../../../../../platform/markdown/browser/markdownRenderer.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
@@ -31,8 +33,11 @@ interface HorusPromptEditorElements {
 	readonly targetAgent: HTMLSelectElement;
 	readonly kind: HTMLSelectElement;
 	readonly status: HTMLSelectElement;
+	readonly editorBody: HTMLElement;
 	readonly editorContainer: HTMLElement;
+	readonly previewContainer: HTMLElement;
 	readonly saveButton: HTMLButtonElement;
+	readonly viewModeButtons: ReadonlyMap<HorusPromptEditorViewMode, HTMLButtonElement>;
 	readonly validation: HTMLElement;
 	readonly statusMessage: HTMLElement;
 	readonly metadata: HTMLElement;
@@ -46,12 +51,16 @@ interface HorusPromptEditorSnapshot {
 	readonly content: string;
 }
 
+type HorusPromptEditorViewMode = 'editor' | 'preview' | 'split';
+
 export class HorusPromptEditor extends EditorPane {
 
 	static readonly ID = HorusPromptEditorInput.EDITOR_ID;
 
 	private readonly contentDisposables = this._register(new DisposableStore());
+	private readonly previewDisposables = this._register(new DisposableStore());
 	private readonly mentionValidationScheduler = this._register(new RunOnceScheduler(() => this.validateMentions().catch(error => this.showStatus(String(error), true)), 300));
+	private readonly previewRenderScheduler = this._register(new RunOnceScheduler(() => this.renderMarkdownPreview(), 150));
 
 	private container: HTMLElement | undefined;
 	private elements: HorusPromptEditorElements | undefined;
@@ -62,6 +71,7 @@ export class HorusPromptEditor extends EditorPane {
 	private currentPrompt: HorusPrompt | undefined;
 	private currentWorkspace: HorusWorkspace | undefined;
 	private savedSnapshot: HorusPromptEditorSnapshot | undefined;
+	private viewMode: HorusPromptEditorViewMode = 'split';
 	private dirty = false;
 
 	constructor(
@@ -72,6 +82,7 @@ export class HorusPromptEditor extends EditorPane {
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IModelService private readonly modelService: IModelService,
 		@ILanguageService private readonly languageService: ILanguageService,
+		@IMarkdownRendererService private readonly markdownRendererService: IMarkdownRendererService,
 		@IHorusStorageService private readonly horusStorageService: IHorusStorageService,
 		@INotificationService private readonly notificationService: INotificationService
 	) {
@@ -111,6 +122,8 @@ export class HorusPromptEditor extends EditorPane {
 	}
 
 	private clearEditorContent(): void {
+		this.previewRenderScheduler.cancel();
+		this.previewDisposables.clear();
 		this.codeEditor?.setModel(null);
 		this.codeEditor = undefined;
 		this.promptModel = undefined;
@@ -190,22 +203,28 @@ export class HorusPromptEditor extends EditorPane {
 
 		const toolbar = DOM.append(root, DOM.$('.horus-editor-toolbar'));
 		const statusMessage = DOM.append(toolbar, DOM.$('.horus-editor-status'));
+		const viewModeButtons = this.renderViewModeButtons(toolbar);
 		const saveButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-save')) as HTMLButtonElement;
 		saveButton.textContent = localize('horusPromptEditorSave', "Save Prompt");
 
-		const editorContainer = DOM.append(root, DOM.$('.horus-editor-content'));
+		const editorBody = DOM.append(root, DOM.$('.horus-editor-body'));
+		const editorContainer = DOM.append(editorBody, DOM.$('.horus-editor-content'));
 		editorContainer.setAttribute('aria-label', localize('horusPromptEditorContentAriaLabel', "Horus prompt Markdown editor. Mention workspace files with @path/to/file."));
 		this.createMarkdownEditor(editorContainer, prompt);
+		const previewContainer = DOM.append(editorBody, DOM.$('.horus-editor-preview'));
+		previewContainer.setAttribute('aria-label', localize('horusPromptEditorPreviewAriaLabel', "Rendered Markdown preview."));
 
 		const validation = DOM.append(root, DOM.$('.horus-editor-mentions'));
 
-		this.elements = { root, title, targetAgent, kind, status, editorContainer, saveButton, validation, statusMessage, metadata };
+		this.elements = { root, title, targetAgent, kind, status, editorBody, editorContainer, previewContainer, saveButton, viewModeButtons, validation, statusMessage, metadata };
 
 		for (const element of [title, targetAgent, kind, status]) {
 			this.contentDisposables.add(DOM.addDisposableListener(element, DOM.EventType.INPUT, () => this.onEditorChanged()));
 		}
 
 		this.contentDisposables.add(DOM.addDisposableListener(saveButton, DOM.EventType.CLICK, () => this.save().catch(error => this.notificationService.error(error))));
+		this.applyViewMode();
+		this.schedulePreviewRender();
 		this.showStatus(localize('horusPromptEditorReady', "Ready."), false);
 		this.updateDirtyState();
 	}
@@ -260,6 +279,78 @@ export class HorusPromptEditor extends EditorPane {
 		this.lastDimension ? this.layout(this.lastDimension) : codeEditor.layout();
 	}
 
+	private renderViewModeButtons(parent: HTMLElement): ReadonlyMap<HorusPromptEditorViewMode, HTMLButtonElement> {
+		const group = DOM.append(parent, DOM.$('.horus-editor-view-modes'));
+		const buttons = new Map<HorusPromptEditorViewMode, HTMLButtonElement>();
+		for (const option of [
+			{ mode: 'editor' as const, label: localize('horusPromptEditorModeEditor', "Editor") },
+			{ mode: 'split' as const, label: localize('horusPromptEditorModeSplit', "Split") },
+			{ mode: 'preview' as const, label: localize('horusPromptEditorModePreview', "Preview") }
+		]) {
+			const button = DOM.append(group, DOM.$('button.horus-editor-view-mode')) as HTMLButtonElement;
+			button.type = 'button';
+			button.textContent = option.label;
+			button.setAttribute('aria-pressed', String(this.viewMode === option.mode));
+			this.contentDisposables.add(DOM.addDisposableListener(button, DOM.EventType.CLICK, () => this.setViewMode(option.mode)));
+			buttons.set(option.mode, button);
+		}
+
+		return buttons;
+	}
+
+	private setViewMode(viewMode: HorusPromptEditorViewMode): void {
+		if (this.viewMode === viewMode) {
+			return;
+		}
+
+		this.viewMode = viewMode;
+		this.applyViewMode();
+		this.schedulePreviewRender();
+	}
+
+	private applyViewMode(): void {
+		if (!this.elements) {
+			return;
+		}
+
+		this.elements.editorBody.classList.toggle('preview-only', this.viewMode === 'preview');
+		this.elements.editorBody.classList.toggle('editor-only', this.viewMode === 'editor');
+		this.elements.editorBody.classList.toggle('split', this.viewMode === 'split');
+		this.elements.editorContainer.hidden = this.viewMode === 'preview';
+		this.elements.previewContainer.hidden = this.viewMode === 'editor';
+		for (const [mode, button] of this.elements.viewModeButtons) {
+			const isActive = mode === this.viewMode;
+			button.classList.toggle('active', isActive);
+			button.setAttribute('aria-pressed', String(isActive));
+		}
+
+		this.codeEditor?.layout();
+	}
+
+	private schedulePreviewRender(): void {
+		if (this.viewMode === 'editor') {
+			return;
+		}
+
+		this.previewRenderScheduler.schedule();
+	}
+
+	private renderMarkdownPreview(): void {
+		if (!this.elements || this.viewMode === 'editor') {
+			return;
+		}
+
+		this.previewDisposables.clear();
+		const markdown = new MarkdownString(this.getEditorContent(), {
+			isTrusted: false,
+			supportThemeIcons: true
+		});
+		const rendered = this.markdownRendererService.render(markdown, {
+			asyncRenderCallback: () => undefined
+		}, this.elements.previewContainer);
+		this.previewDisposables.add(rendered);
+	}
+
 	private renderSelect<T extends number>(
 		parent: HTMLElement,
 		label: string,
@@ -284,6 +375,7 @@ export class HorusPromptEditor extends EditorPane {
 	private onEditorChanged(): void {
 		this.updateDirtyState();
 		this.scheduleMentionValidation();
+		this.schedulePreviewRender();
 	}
 
 	private updateDirtyState(): void {
