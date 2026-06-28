@@ -9,7 +9,15 @@ export const HORUS_PROMPT_DETAIL_VIEW_ID = 'workbench.horus.promptDetail';
 export const enum HorusCommandId {
 	CreateWorkspace = 'horus.createWorkspace',
 	CreatePrompt = 'horus.createPrompt',
+	CreateChildPrompt = 'horus.createChildPrompt',
 	OpenPrompt = 'horus.openPrompt',
+	LinkPlanToPrompt = 'horus.linkPlanToPrompt',
+	SyncLinkedPlan = 'horus.syncLinkedPlan',
+	OpenLinkedPlanFile = 'horus.openLinkedPlanFile',
+	OpenLinkedPlanDiff = 'horus.openLinkedPlanDiff',
+	OpenPromptVersionDiff = 'horus.openPromptVersionDiff',
+	PauseLinkedPlan = 'horus.pauseLinkedPlan',
+	ResumeLinkedPlan = 'horus.resumeLinkedPlan',
 	Refresh = 'horus.refresh'
 }
 

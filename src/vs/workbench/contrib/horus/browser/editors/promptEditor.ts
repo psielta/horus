@@ -18,10 +18,11 @@ import { ITextModel } from '../../../../../editor/common/model.js';
 import { ILanguageFeaturesService } from '../../../../../editor/common/services/languageFeatures.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { localize } from '../../../../../nls.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { IHorusStorageService } from '../../../../../platform/horus/common/horusStorage.js';
 import { extractHorusFileMentions } from '../../../../../platform/horus/common/horusMentions.js';
-import { HorusFileMentionValidationResult, HorusPrompt, HorusPromptKind, HorusPromptStatus, HorusTargetAgent, HorusWorkspace } from '../../../../../platform/horus/common/horusTypes.js';
+import { HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentStatus, HorusPrompt, HorusPromptKind, HorusPromptStatus, HorusTargetAgent, HorusWorkspace } from '../../../../../platform/horus/common/horusTypes.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IMarkdownRendererService } from '../../../../../platform/markdown/browser/markdownRenderer.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
@@ -33,6 +34,7 @@ import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { ISearchService, QueryType } from '../../../../services/search/common/search.js';
 import { horusWorkbenchState } from '../horusWorkbenchState.js';
+import { HorusCommandId } from '../../common/horus.js';
 import { HorusPromptEditorInput } from './promptEditorInput.js';
 
 interface HorusPromptEditorElements {
@@ -47,6 +49,7 @@ interface HorusPromptEditorElements {
 	readonly saveButton: HTMLButtonElement;
 	readonly viewModeButtons: ReadonlyMap<HorusPromptEditorViewMode, HTMLButtonElement>;
 	readonly validation: HTMLElement;
+	readonly linkedPlan: HTMLElement;
 	readonly statusMessage: HTMLElement;
 	readonly metadata: HTMLElement;
 }
@@ -101,9 +104,15 @@ export class HorusPromptEditor extends EditorPane {
 		@IMarkdownRendererService private readonly markdownRendererService: IMarkdownRendererService,
 		@ISearchService private readonly searchService: ISearchService,
 		@IHorusStorageService private readonly horusStorageService: IHorusStorageService,
+		@ICommandService private readonly commandService: ICommandService,
 		@INotificationService private readonly notificationService: INotificationService
 	) {
 		super(HorusPromptEditor.ID, group, telemetryService, themeService, storageService);
+		this._register(this.horusStorageService.onDidChangeData(event => {
+			if (this.currentPrompt && (event.kind === 'linkedDocument' || event.kind === 'prompt' || event.kind === 'storage')) {
+				this.renderLinkedPlanSummary().catch(error => this.showStatus(String(error), true));
+			}
+		}));
 	}
 
 	protected override createEditor(parent: HTMLElement): void {
@@ -221,9 +230,20 @@ export class HorusPromptEditor extends EditorPane {
 		const toolbar = DOM.append(root, DOM.$('.horus-editor-toolbar'));
 		const statusMessage = DOM.append(toolbar, DOM.$('.horus-editor-status'));
 		const viewModeButtons = this.renderViewModeButtons(toolbar);
+		const comparePromptButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-toolbar-button')) as HTMLButtonElement;
+		comparePromptButton.textContent = localize('horusPromptEditorComparePrompt', "Compare Prompt");
+		const createChildButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-toolbar-button')) as HTMLButtonElement;
+		createChildButton.textContent = localize('horusPromptEditorCreateChild', "Create Child");
+		const linkPlanButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-toolbar-button')) as HTMLButtonElement;
+		linkPlanButton.textContent = localize('horusPromptEditorLinkPlan', "Link Plan");
+		const syncPlanButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-toolbar-button')) as HTMLButtonElement;
+		syncPlanButton.textContent = localize('horusPromptEditorSyncPlan', "Sync Plan");
+		const comparePlanButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-toolbar-button')) as HTMLButtonElement;
+		comparePlanButton.textContent = localize('horusPromptEditorComparePlan', "Compare Plan");
 		const saveButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-save')) as HTMLButtonElement;
 		saveButton.textContent = localize('horusPromptEditorSave', "Save Prompt");
 
+		const linkedPlan = DOM.append(root, DOM.$('.horus-editor-linked-plan'));
 		const editorBody = DOM.append(root, DOM.$('.horus-editor-body'));
 		const editorContainer = DOM.append(editorBody, DOM.$('.horus-editor-content'));
 		editorContainer.setAttribute('aria-label', localize('horusPromptEditorContentAriaLabel', "Horus prompt Markdown editor. Mention workspace files with @path/to/file."));
@@ -233,17 +253,65 @@ export class HorusPromptEditor extends EditorPane {
 
 		const validation = DOM.append(root, DOM.$('.horus-editor-mentions'));
 
-		this.elements = { root, title, targetAgent, kind, status, editorBody, editorContainer, previewContainer, saveButton, viewModeButtons, validation, statusMessage, metadata };
+		this.elements = { root, title, targetAgent, kind, status, editorBody, editorContainer, previewContainer, saveButton, viewModeButtons, validation, linkedPlan, statusMessage, metadata };
 
 		for (const element of [title, targetAgent, kind, status]) {
 			this.contentDisposables.add(DOM.addDisposableListener(element, DOM.EventType.INPUT, () => this.onEditorChanged()));
 		}
 
 		this.contentDisposables.add(DOM.addDisposableListener(saveButton, DOM.EventType.CLICK, () => this.save().catch(error => this.notificationService.error(error))));
+		this.contentDisposables.add(DOM.addDisposableListener(comparePromptButton, DOM.EventType.CLICK, () => this.commandService.executeCommand(HorusCommandId.OpenPromptVersionDiff, prompt.id)));
+		this.contentDisposables.add(DOM.addDisposableListener(createChildButton, DOM.EventType.CLICK, () => this.commandService.executeCommand(HorusCommandId.CreateChildPrompt, prompt.id)));
+		this.contentDisposables.add(DOM.addDisposableListener(linkPlanButton, DOM.EventType.CLICK, () => this.commandService.executeCommand(HorusCommandId.LinkPlanToPrompt, prompt.id)));
+		this.contentDisposables.add(DOM.addDisposableListener(syncPlanButton, DOM.EventType.CLICK, () => this.commandService.executeCommand(HorusCommandId.SyncLinkedPlan, prompt.id)));
+		this.contentDisposables.add(DOM.addDisposableListener(comparePlanButton, DOM.EventType.CLICK, () => this.commandService.executeCommand(HorusCommandId.OpenLinkedPlanDiff, prompt.id)));
 		this.applyViewMode();
+		this.renderLinkedPlanSummary().catch(error => this.showStatus(String(error), true));
 		this.schedulePreviewRender();
 		this.showStatus(localize('horusPromptEditorReady', "Ready."), false);
 		this.updateDirtyState();
+	}
+
+	private async renderLinkedPlanSummary(): Promise<void> {
+		if (!this.elements || !this.currentPrompt) {
+			return;
+		}
+
+		DOM.clearNode(this.elements.linkedPlan);
+		const document = await this.horusStorageService.getLinkedDocumentForPrompt(this.currentPrompt.id);
+		if (!document) {
+			this.elements.linkedPlan.textContent = localize('horusPromptEditorNoLinkedPlan', "No linked plan. Use Link Plan to monitor an external Markdown plan.");
+			return;
+		}
+
+		const summary = DOM.append(this.elements.linkedPlan, DOM.$('.horus-editor-linked-plan-summary'));
+		summary.classList.toggle('error', document.status === HorusLinkedDocumentStatus.Error);
+		summary.textContent = this.getLinkedPlanSummary(document);
+		summary.title = document.absolutePath;
+
+		if (document.lastError) {
+			const error = DOM.append(this.elements.linkedPlan, DOM.$('.horus-editor-linked-plan-error'));
+			error.textContent = document.lastError;
+		}
+	}
+
+	private getLinkedPlanSummary(document: HorusLinkedDocument): string {
+		const status = this.getLinkedPlanStatusLabel(document.status);
+		const synced = document.lastSyncedAtUtc ? new Date(document.lastSyncedAtUtc).toLocaleString() : localize('horusPromptEditorLinkedPlanNeverSynced', "never");
+		return localize('horusPromptEditorLinkedPlanSummary', "Linked plan: {0} - {1} - v{2} - Last sync {3}", document.displayName ?? document.absolutePath, status, document.currentVersion, synced);
+	}
+
+	private getLinkedPlanStatusLabel(status: HorusLinkedDocumentStatus): string {
+		switch (status) {
+			case HorusLinkedDocumentStatus.Watching:
+				return localize('horusPromptEditorLinkedPlanWatching', "watching");
+			case HorusLinkedDocumentStatus.Paused:
+				return localize('horusPromptEditorLinkedPlanPaused', "paused");
+			case HorusLinkedDocumentStatus.Error:
+				return localize('horusPromptEditorLinkedPlanError', "error");
+			case HorusLinkedDocumentStatus.Draft:
+				return localize('horusPromptEditorLinkedPlanDraft', "draft");
+		}
 	}
 
 	private createMarkdownEditor(container: HTMLElement, prompt: HorusPrompt): void {

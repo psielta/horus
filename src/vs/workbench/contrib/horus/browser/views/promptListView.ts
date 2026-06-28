@@ -75,7 +75,9 @@ export class HorusPromptListView extends HorusViewPane {
 			return;
 		}
 
-		if (!prompts.some(prompt => prompt.id === horusWorkbenchState.getSelectedPromptId())) {
+		const selectedPromptId = horusWorkbenchState.getSelectedPromptId();
+		const selectedPrompt = selectedPromptId ? await this.horusStorageService.getPrompt(selectedPromptId) : undefined;
+		if (!selectedPrompt || selectedPrompt.workingDirectoryId !== selectedWorkspaceId) {
 			horusWorkbenchState.setSelectedPromptId(prompts[0].id);
 		}
 
