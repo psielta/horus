@@ -346,6 +346,9 @@ export class HorusPromptEditor extends EditorPane {
 			supportThemeIcons: true
 		});
 		const rendered = this.markdownRendererService.render(markdown, {
+			markedOptions: {
+				gfm: true
+			},
 			asyncRenderCallback: () => undefined
 		}, this.elements.previewContainer);
 		this.previewDisposables.add(rendered);
