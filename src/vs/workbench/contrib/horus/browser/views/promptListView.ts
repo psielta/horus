@@ -1,0 +1,82 @@
+import * as DOM from '../../../../../base/browser/dom.js';
+import { localize } from '../../../../../nls.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
+import { IContextMenuService } from '../../../../../platform/contextview/browser/contextView.js';
+import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
+import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IHorusStorageService } from '../../../../../platform/horus/common/horusStorage.js';
+import { HorusPrompt } from '../../../../../platform/horus/common/horusTypes.js';
+import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
+import { IViewDescriptorService } from '../../../../common/views.js';
+import { IViewletViewOptions } from '../../../../browser/parts/views/viewsViewlet.js';
+import { HorusCommandId } from '../../common/horus.js';
+import { horusWorkbenchState } from '../horusWorkbenchState.js';
+import { HorusViewPane } from './horusViewPane.js';
+
+export class HorusPromptListView extends HorusViewPane {
+
+	constructor(
+		options: IViewletViewOptions,
+		@IKeybindingService keybindingService: IKeybindingService,
+		@IContextMenuService contextMenuService: IContextMenuService,
+		@IConfigurationService configurationService: IConfigurationService,
+		@IContextKeyService contextKeyService: IContextKeyService,
+		@IViewDescriptorService viewDescriptorService: IViewDescriptorService,
+		@IInstantiationService instantiationService: IInstantiationService,
+		@IOpenerService openerService: IOpenerService,
+		@IThemeService themeService: IThemeService,
+		@IHoverService hoverService: IHoverService,
+		@IHorusStorageService private readonly horusStorageService: IHorusStorageService,
+		@ICommandService private readonly commandService: ICommandService
+	) {
+		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
+
+		this._register(this.horusStorageService.onDidChangeData(event => {
+			if (event.kind === 'prompt' || event.kind === 'workspace' || event.kind === 'storage') {
+				this.refresh().catch(error => this.renderMessage(String(error)));
+			}
+		}));
+		this._register(horusWorkbenchState.onDidChangeSelectedWorkspace(() => this.refresh().catch(error => this.renderMessage(String(error)))));
+	}
+
+	protected async refresh(): Promise<void> {
+		if (!this.horusBody) {
+			return;
+		}
+
+		const selectedWorkspaceId = horusWorkbenchState.getSelectedWorkspaceId();
+		DOM.clearNode(this.horusBody);
+		this.horusBody.appendChild(this.renderButton(localize('horusCreatePrompt', "Create Prompt"), () => this.commandService.executeCommand(HorusCommandId.CreatePrompt)));
+
+		if (!selectedWorkspaceId) {
+			this.renderMessage(localize('horusSelectWorkspace', "Select a Horus workspace first."));
+			return;
+		}
+
+		const prompts = await this.horusStorageService.listPrompts({ workingDirectoryId: selectedWorkspaceId, rootOnly: true });
+		if (!prompts.length) {
+			this.renderMessage(localize('horusNoPrompts', "No root prompts in this workspace."));
+			return;
+		}
+
+		const list = DOM.append(this.horusBody, DOM.$('.horus-list'));
+		for (const prompt of prompts) {
+			list.appendChild(this.renderPrompt(prompt));
+		}
+	}
+
+	private renderPrompt(prompt: HorusPrompt): HTMLElement {
+		const item = DOM.$('.horus-list-item') as HTMLElement;
+		const title = DOM.append(item, DOM.$('.horus-list-title'));
+		title.textContent = prompt.title;
+
+		const description = DOM.append(item, DOM.$('.horus-list-description'));
+		description.textContent = `v${prompt.currentVersion} · ${new Date(prompt.updatedAtUtc).toLocaleString()}`;
+
+		return item;
+	}
+}

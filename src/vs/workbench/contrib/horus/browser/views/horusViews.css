@@ -1,0 +1,58 @@
+.horus-view-pane {
+	box-sizing: border-box;
+	height: 100%;
+	padding: 8px;
+	overflow: auto;
+}
+
+.horus-button {
+	width: 100%;
+	margin-bottom: 8px;
+	padding: 4px 8px;
+	color: var(--vscode-button-foreground);
+	background-color: var(--vscode-button-background);
+	border: 0;
+	border-radius: 2px;
+	cursor: pointer;
+}
+
+.horus-button:hover {
+	background-color: var(--vscode-button-hoverBackground);
+}
+
+.horus-empty {
+	padding: 8px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.horus-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.horus-list-item {
+	padding: 6px 8px;
+	border-radius: 3px;
+	cursor: pointer;
+}
+
+.horus-list-item:hover,
+.horus-list-item.selected {
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+.horus-list-title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.horus-list-description {
+	margin-top: 2px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+}
