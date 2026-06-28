@@ -45,6 +45,18 @@ export class HorusWorkspaceRepository implements IHorusWorkspaceRepository {
 		return row ? this.toWorkspace(row) : undefined;
 	}
 
+	async getByAbsolutePath(absolutePath: string): Promise<HorusWorkspace | undefined> {
+		const row = await this.connection.get<WorkspaceRow>(`
+			SELECT w.*, COUNT(p.id) AS prompt_count
+			FROM workspaces w
+			LEFT JOIN prompts p ON p.working_directory_id = w.id
+			WHERE w.absolute_path = ?
+			GROUP BY w.id;
+		`, [absolutePath]);
+
+		return row ? this.toWorkspace(row) : undefined;
+	}
+
 	async create(data: HorusCreateWorkspaceData): Promise<HorusWorkspace> {
 		const id = generateUuid();
 		const now = new Date().toISOString();
@@ -73,6 +85,15 @@ export class HorusWorkspaceRepository implements IHorusWorkspaceRepository {
 		}
 
 		return workspace;
+	}
+
+	async getOrCreate(data: HorusCreateWorkspaceData): Promise<HorusWorkspace> {
+		const existing = await this.getByAbsolutePath(data.absolutePath);
+		if (existing) {
+			return existing;
+		}
+
+		return this.create(data);
 	}
 
 	private toWorkspace(row: WorkspaceRow): HorusWorkspace {

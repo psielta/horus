@@ -90,7 +90,7 @@ export const v001Initial: HorusMigration = {
 			prompt_id TEXT NOT NULL,
 			relative_path TEXT NOT NULL,
 			raw_mention TEXT NOT NULL,
-			exists INTEGER NOT NULL DEFAULT 0,
+			file_exists INTEGER NOT NULL DEFAULT 0,
 			resolved_at_utc TEXT,
 			FOREIGN KEY (prompt_id) REFERENCES prompts(id) ON DELETE CASCADE
 		);`,

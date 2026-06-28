@@ -2,15 +2,13 @@ export class HorusWriteQueue {
 
 	private current = Promise.resolve();
 	private paused = false;
-	private pausePromise: Promise<void> | undefined;
-	private resumePause: (() => void) | undefined;
 
 	enqueue<T>(operation: () => Promise<T>): Promise<T> {
-		const run = async () => {
-			if (this.pausePromise) {
-				await this.pausePromise;
-			}
+		if (this.paused) {
+			return Promise.reject(new Error('Horus write queue is paused'));
+		}
 
+		const run = async () => {
 			return operation();
 		};
 
@@ -25,9 +23,6 @@ export class HorusWriteQueue {
 		}
 
 		this.paused = true;
-		this.pausePromise = new Promise<void>(resolve => {
-			this.resumePause = resolve;
-		});
 	}
 
 	resume(): void {
@@ -36,9 +31,6 @@ export class HorusWriteQueue {
 		}
 
 		this.paused = false;
-		this.resumePause?.();
-		this.resumePause = undefined;
-		this.pausePromise = undefined;
 	}
 
 	async whenIdle(): Promise<void> {

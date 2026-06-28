@@ -1,7 +1,7 @@
 import { Event } from '../../../base/common/event.js';
 import { IChannel } from '../../../base/parts/ipc/common/ipc.js';
 import { HorusDataChangeEvent, IHorusStorageService } from '../common/horusStorage.js';
-import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusPrompt, HorusPromptQuery, HorusStorageHealth, HorusWorkspace } from '../common/horusTypes.js';
+import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusStorageHealth, HorusWorkspace } from '../common/horusTypes.js';
 
 export class HorusStorageChannelClient implements IHorusStorageService {
 
@@ -25,8 +25,16 @@ export class HorusStorageChannelClient implements IHorusStorageService {
 		return this.channel.call('createWorkspace', data);
 	}
 
+	resolveNativeWorkspaces(folders: readonly HorusNativeWorkspaceFolder[]): Promise<readonly HorusWorkspace[]> {
+		return this.channel.call('resolveNativeWorkspaces', folders);
+	}
+
 	listPrompts(query?: HorusPromptQuery): Promise<readonly HorusPrompt[]> {
 		return this.channel.call('listPrompts', query);
+	}
+
+	getPrompt(id: string): Promise<HorusPrompt | undefined> {
+		return this.channel.call('getPrompt', id);
 	}
 
 	createPrompt(data: HorusCreatePromptData): Promise<HorusPrompt> {

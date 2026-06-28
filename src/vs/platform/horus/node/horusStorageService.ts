@@ -3,7 +3,7 @@ import { Disposable } from '../../../base/common/lifecycle.js';
 import { Emitter } from '../../../base/common/event.js';
 import { INativeEnvironmentService } from '../../environment/common/environment.js';
 import { IFileService } from '../../files/common/files.js';
-import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusPrompt, HorusPromptQuery, HorusStorageHealth, HorusWorkspace } from '../common/horusTypes.js';
+import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusStorageHealth, HorusWorkspace } from '../common/horusTypes.js';
 import { HorusDataChangeEvent, IHorusStorageService } from '../common/horusStorage.js';
 import { HorusBackupService } from './horusBackupService.js';
 import { HorusFileValidationService } from './horusFileValidationService.js';
@@ -91,9 +91,43 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 		return workspace;
 	}
 
+	async resolveNativeWorkspaces(folders: readonly HorusNativeWorkspaceFolder[]): Promise<readonly HorusWorkspace[]> {
+		await this.ensureReady();
+
+		const workspaces: HorusWorkspace[] = [];
+		let created = false;
+
+		for (const folder of folders) {
+			const workspace = await this.writeQueue.enqueue(async () => {
+				const existing = await this.getWorkspaceRepository().getByAbsolutePath(folder.absolutePath);
+				if (existing) {
+					return existing;
+				}
+
+				created = true;
+				return this.getWorkspaceRepository().create({
+					name: folder.name,
+					absolutePath: folder.absolutePath
+				});
+			});
+			workspaces.push(workspace);
+		}
+
+		if (created) {
+			this.onDidChangeDataEmitter.fire({ kind: 'workspace' });
+		}
+
+		return workspaces;
+	}
+
 	async listPrompts(query?: HorusPromptQuery): Promise<readonly HorusPrompt[]> {
 		await this.ensureReady();
 		return this.getPromptRepository().list(query);
+	}
+
+	async getPrompt(id: string): Promise<HorusPrompt | undefined> {
+		await this.ensureReady();
+		return this.getPromptRepository().get(id);
 	}
 
 	async createPrompt(data: HorusCreatePromptData): Promise<HorusPrompt> {

@@ -3,7 +3,9 @@ import { HorusCreatePromptData, HorusCreateWorkspaceData, HorusPrompt, HorusProm
 export interface IHorusWorkspaceRepository {
 	list(): Promise<readonly HorusWorkspace[]>;
 	get(id: string): Promise<HorusWorkspace | undefined>;
+	getByAbsolutePath(absolutePath: string): Promise<HorusWorkspace | undefined>;
 	create(data: HorusCreateWorkspaceData): Promise<HorusWorkspace>;
+	getOrCreate(data: HorusCreateWorkspaceData): Promise<HorusWorkspace>;
 }
 
 export interface IHorusPromptRepository {

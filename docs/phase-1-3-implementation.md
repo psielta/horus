@@ -10,14 +10,16 @@ Phases 1, 2, and 3 establish the first native Horus slice inside the VS Code for
 - repository layer for workspaces and prompts;
 - file mention validation scoped to a workspace path;
 - Shared Process IPC channel and workbench client;
-- Activity Bar container with Workspaces and Prompts views;
-- commands to create workspaces and prompts.
+- Activity Bar container with Workspaces, Prompts, and Prompt Details views;
+- commands to use the current VS Code workspace and create prompts.
 
 ## Architecture
 
 The persistence service is registered in the Shared Process and exposed to the workbench through the `horus/storage` IPC channel. The database is created under the product user data path as `horus.db`, which keeps the storage local to the Horus profile.
 
 Writes go through a single in-process queue. SQLite is configured with WAL mode, short explicit transactions, `busy_timeout`, foreign keys, and a separate read connection. This matches the concurrency requirements from the approved plan without introducing a second native SQLite dependency.
+
+Horus does not ask the user to create a second workspace concept. The VS Code workspace folders opened by the user are the Horus workspaces. The `workspaces` SQLite table is internal metadata/cache used for foreign keys, counts, settings, and future domain relations. The workbench calls `resolveNativeWorkspaces(...)` to get or create metadata records for the currently open VS Code folders.
 
 ## Implemented Files
 
@@ -31,14 +33,18 @@ Writes go through a single in-process queue. SQLite is configured with WAL mode,
 - `src/vs/platform/horus/node/horusStorageService.ts` composes the persistence service.
 - `src/vs/platform/horus/common/horusStorageIpc.ts` exposes the server IPC channel.
 - `src/vs/platform/horus/electron-browser/horusStorageClient.ts` exposes the workbench IPC client.
-- `src/vs/workbench/contrib/horus/browser/horus.contribution.ts` registers the initial UI and commands.
+- `src/vs/workbench/contrib/horus/browser/horusNativeWorkspaces.ts` maps VS Code workspace folders to Horus metadata.
+- `src/vs/workbench/contrib/horus/browser/horus.contribution.ts` registers the initial UI, context keys, and commands.
+- `src/vs/workbench/contrib/horus/browser/views/promptDetailView.ts` renders the selected prompt details.
 - `src/vs/workbench/contrib/horus/electron-browser/horus.contribution.ts` registers the desktop remote service.
+- `src/vs/platform/horus/test/node/*.test.ts` covers SQLite, migrations, write queue, repositories, IPC, and file mentions.
 
 ## Validation
 
 The following checks passed:
 
 - `node --experimental-strip-types src/vs/platform/horus/test/node/sqliteSpike.cts`
+- `npm run test-node -- --runGlob "vs/platform/horus/test/node/*.test.js"`
 - `npm run typecheck-client`
 - `$env:NODE_OPTIONS='--max-old-space-size=8192'; npm run valid-layers-check`
 - `npm run compile-client`

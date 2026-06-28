@@ -1,19 +1,20 @@
 import * as DOM from '../../../../../base/browser/dom.js';
 import { localize } from '../../../../../nls.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { IContextMenuService } from '../../../../../platform/contextview/browser/contextView.js';
+import { IHorusStorageService } from '../../../../../platform/horus/common/horusStorage.js';
+import { HorusWorkspace } from '../../../../../platform/horus/common/horusTypes.js';
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { IHorusStorageService } from '../../../../../platform/horus/common/horusStorage.js';
-import { HorusWorkspace } from '../../../../../platform/horus/common/horusTypes.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
-import { IViewDescriptorService } from '../../../../common/views.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IViewletViewOptions } from '../../../../browser/parts/views/viewsViewlet.js';
-import { HorusCommandId } from '../../common/horus.js';
+import { IViewDescriptorService } from '../../../../common/views.js';
+import { resolveNativeHorusWorkspaces } from '../horusNativeWorkspaces.js';
 import { horusWorkbenchState } from '../horusWorkbenchState.js';
 import { HorusViewPane } from './horusViewPane.js';
 
@@ -31,7 +32,8 @@ export class HorusWorkspaceListView extends HorusViewPane {
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@IHorusStorageService private readonly horusStorageService: IHorusStorageService,
-		@ICommandService private readonly commandService: ICommandService
+		@ICommandService private readonly commandService: ICommandService,
+		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
@@ -40,6 +42,8 @@ export class HorusWorkspaceListView extends HorusViewPane {
 				this.refresh().catch(error => this.renderMessage(String(error)));
 			}
 		}));
+		this._register(this.workspaceContextService.onDidChangeWorkspaceFolders(() => this.refresh().catch(error => this.renderMessage(String(error)))));
+		this._register(horusWorkbenchState.onDidChangeSelectedWorkspace(() => this.refresh().catch(error => this.renderMessage(String(error)))));
 	}
 
 	protected async refresh(): Promise<void> {
@@ -47,16 +51,16 @@ export class HorusWorkspaceListView extends HorusViewPane {
 			return;
 		}
 
-		const workspaces = await this.horusStorageService.listWorkspaces();
+		const workspaces = await resolveNativeHorusWorkspaces(this.workspaceContextService, this.horusStorageService);
 		DOM.clearNode(this.horusBody);
-		this.horusBody.appendChild(this.renderButton(localize('horusCreateWorkspace', "Create Workspace"), () => this.commandService.executeCommand(HorusCommandId.CreateWorkspace)));
 
 		if (!workspaces.length) {
-			this.renderMessage(localize('horusNoWorkspaces', "No Horus workspaces yet."));
+			this.horusBody.appendChild(this.renderButton(localize('horusOpenFolder', "Open Folder"), () => this.commandService.executeCommand('workbench.action.files.openFolder')));
+			this.appendMessage(localize('horusNoNativeWorkspace', "Open a folder in VS Code to use Horus in that workspace."));
 			return;
 		}
 
-		if (!horusWorkbenchState.getSelectedWorkspaceId()) {
+		if (!workspaces.some(workspace => workspace.id === horusWorkbenchState.getSelectedWorkspaceId())) {
 			horusWorkbenchState.setSelectedWorkspaceId(workspaces[0].id);
 		}
 
@@ -76,11 +80,10 @@ export class HorusWorkspaceListView extends HorusViewPane {
 		title.textContent = workspace.name;
 
 		const description = DOM.append(item, DOM.$('.horus-list-description'));
-		description.textContent = `${workspace.absolutePath} · ${workspace.promptCount ?? 0} prompts`;
+		description.textContent = `${workspace.absolutePath} - ${workspace.promptCount ?? 0} prompts`;
 
 		this._register(DOM.addDisposableListener(item, DOM.EventType.CLICK, () => {
 			horusWorkbenchState.setSelectedWorkspaceId(workspace.id);
-			this.refresh().catch(error => this.renderMessage(String(error)));
 		}));
 
 		return item;

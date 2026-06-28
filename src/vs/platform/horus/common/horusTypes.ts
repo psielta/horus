@@ -323,6 +323,11 @@ export interface HorusCreateWorkspaceData {
 	readonly taskNumberPattern?: string | null;
 }
 
+export interface HorusNativeWorkspaceFolder {
+	readonly name: string;
+	readonly absolutePath: string;
+}
+
 export interface HorusCreatePromptData {
 	readonly workingDirectoryId: HorusUuid;
 	readonly parentPromptId?: HorusUuid | null;

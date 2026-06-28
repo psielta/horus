@@ -44,6 +44,14 @@ export abstract class HorusViewPane extends ViewPane {
 		}
 
 		DOM.clearNode(this.horusBody);
+		this.appendMessage(message);
+	}
+
+	protected appendMessage(message: string): void {
+		if (!this.horusBody) {
+			return;
+		}
+
 		const element = DOM.append(this.horusBody, DOM.$('.horus-empty'));
 		element.textContent = message;
 	}

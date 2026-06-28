@@ -3,6 +3,7 @@ import { dirname } from '../../../base/common/path.js';
 
 type SQLite3Module = typeof import('@vscode/sqlite3');
 type SQLiteDatabase = import('@vscode/sqlite3').Database;
+type SQLite3Import = SQLite3Module & { readonly default?: SQLite3Module };
 
 export type HorusSQLiteRow = Record<string, unknown>;
 
@@ -92,7 +93,7 @@ export class HorusSQLiteConnection {
 		await mkdir(dirname(destinationPath), { recursive: true });
 
 		await new Promise<void>((resolve, reject) => {
-			const backup = db.backup(destinationPath, error => error ? reject(error) : resolve());
+			const backup = db.backup(destinationPath);
 			backup.step(-1, stepError => {
 				if (stepError) {
 					backup.finish(() => reject(stepError));
@@ -113,7 +114,8 @@ export class HorusSQLiteConnection {
 
 	private async getSQLite3(): Promise<SQLite3Module> {
 		if (!this.sqlite3) {
-			this.sqlite3 = await import('@vscode/sqlite3');
+			const sqlite3 = await import('@vscode/sqlite3') as SQLite3Import;
+			this.sqlite3 = sqlite3.default ?? sqlite3;
 		}
 
 		return this.sqlite3;
