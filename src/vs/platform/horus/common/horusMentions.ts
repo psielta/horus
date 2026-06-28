@@ -1,4 +1,4 @@
-const plainFileMentionPattern = /(^|[\s([{"'])@([^\s@]+(?:[\\/][^\s@]+)+)/g;
+const plainFileMentionPattern = /(^|[\s([{"'])@["']?([^\s@]+)/g;
 const trailingPathPunctuationPattern = /[)"',.;:!?]+$/;
 
 export function extractHorusFileMentions(content: string): readonly string[] {
@@ -10,7 +10,7 @@ export function extractHorusFileMentions(content: string): readonly string[] {
 		let match: RegExpExecArray | null;
 		while ((match = plainFileMentionPattern.exec(line)) !== null) {
 			const rawPath = match[2]?.replace(trailingPathPunctuationPattern, '').replace(/^["']|["']$/g, '').trim();
-			if (!rawPath || !/[\\/]/.test(rawPath)) {
+			if (!rawPath || (!/[\\/]/.test(rawPath) && !/\.[^./\\]+$/.test(rawPath))) {
 				continue;
 			}
 

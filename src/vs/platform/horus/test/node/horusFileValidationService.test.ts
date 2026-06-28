@@ -41,7 +41,7 @@ suite('HorusFileMention', () => {
 	});
 
 	test('extracts unique markdown file mentions', () => {
-		assert.deepStrictEqual(extractHorusFileMentions('Use @src/index.ts, @src/index.ts and @"docs/plan.md".'), ['src/index.ts', 'docs/plan.md']);
+		assert.deepStrictEqual(extractHorusFileMentions('Use @README.md, @src/index.ts, @src/index.ts and @"docs/plan.md".'), ['README.md', 'src/index.ts', 'docs/plan.md']);
 	});
 
 	function createFileService(): IFileService {

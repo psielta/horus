@@ -5,10 +5,17 @@ import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Dimension } from '../../../../../base/browser/dom.js';
 import { MarkdownString } from '../../../../../base/common/htmlContent.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { Schemas } from '../../../../../base/common/network.js';
+import { relativePath as resourceRelativePath } from '../../../../../base/common/resources.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
 import { IEditorConstructionOptions } from '../../../../../editor/browser/config/editorConfiguration.js';
+import { Position } from '../../../../../editor/common/core/position.js';
+import { Range } from '../../../../../editor/common/core/range.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
+import { CompletionContext, CompletionItem, CompletionItemKind, CompletionList } from '../../../../../editor/common/languages.js';
 import { ITextModel } from '../../../../../editor/common/model.js';
+import { ILanguageFeaturesService } from '../../../../../editor/common/services/languageFeatures.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { localize } from '../../../../../nls.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -24,6 +31,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
+import { ISearchService, QueryType } from '../../../../services/search/common/search.js';
 import { horusWorkbenchState } from '../horusWorkbenchState.js';
 import { HorusPromptEditorInput } from './promptEditorInput.js';
 
@@ -82,7 +90,9 @@ export class HorusPromptEditor extends EditorPane {
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IModelService private readonly modelService: IModelService,
 		@ILanguageService private readonly languageService: ILanguageService,
+		@ILanguageFeaturesService private readonly languageFeaturesService: ILanguageFeaturesService,
 		@IMarkdownRendererService private readonly markdownRendererService: IMarkdownRendererService,
+		@ISearchService private readonly searchService: ISearchService,
 		@IHorusStorageService private readonly horusStorageService: IHorusStorageService,
 		@INotificationService private readonly notificationService: INotificationService
 	) {
@@ -276,7 +286,100 @@ export class HorusPromptEditor extends EditorPane {
 			this.contentDisposables.add(model);
 		}
 		this.contentDisposables.add(codeEditor.onDidChangeModelContent(() => this.onEditorChanged()));
+		this.registerFileMentionCompletionProvider(model);
 		this.lastDimension ? this.layout(this.lastDimension) : codeEditor.layout();
+	}
+
+	private registerFileMentionCompletionProvider(model: ITextModel): void {
+		this.contentDisposables.add(this.languageFeaturesService.completionProvider.register({
+			language: 'markdown',
+			scheme: Schemas.vscode,
+			hasAccessToAllModels: true
+		}, {
+			_debugDisplayName: 'horusFileMentionCompletionProvider',
+			triggerCharacters: ['@', '/', '\\', '.', '-', '_'],
+			provideCompletionItems: async (candidateModel: ITextModel, position: Position, _context: CompletionContext, token: CancellationToken): Promise<CompletionList> => {
+				if (candidateModel.uri.toString() !== model.uri.toString()) {
+					return { suggestions: [] };
+				}
+
+				const mention = this.getFileMentionCompletionContext(candidateModel, position);
+				if (!mention || !this.currentWorkspace) {
+					return { suggestions: [] };
+				}
+
+				return {
+					suggestions: await this.provideFileMentionCompletionItems(this.currentWorkspace, mention.pathPrefix, mention.range, token),
+					incomplete: true
+				};
+			}
+		}));
+	}
+
+	private getFileMentionCompletionContext(model: ITextModel, position: Position): { readonly pathPrefix: string; readonly range: Range } | undefined {
+		const linePrefix = model.getLineContent(position.lineNumber).slice(0, position.column - 1);
+		const atIndex = linePrefix.lastIndexOf('@');
+		if (atIndex < 0) {
+			return undefined;
+		}
+
+		const beforeAt = atIndex === 0 ? '' : linePrefix.charAt(atIndex - 1);
+		if (beforeAt && !/[\s([{"']/.test(beforeAt)) {
+			return undefined;
+		}
+
+		const pathPrefix = linePrefix.slice(atIndex + 1).replace(/^["']/, '');
+		if (/\s|@/.test(pathPrefix)) {
+			return undefined;
+		}
+
+		return {
+			pathPrefix,
+			range: new Range(position.lineNumber, atIndex + 1, position.lineNumber, position.column)
+		};
+	}
+
+	private async provideFileMentionCompletionItems(workspace: HorusWorkspace, pathPrefix: string, range: Range, token: CancellationToken): Promise<CompletionItem[]> {
+		const workspaceRoot = URI.file(workspace.absolutePath);
+		const searchResult = await this.searchService.fileSearch({
+			type: QueryType.File,
+			_reason: 'horusPromptFileMention',
+			folderQueries: [{
+				folder: workspaceRoot,
+				disregardIgnoreFiles: workspace.respectGitignore === false,
+				disregardParentIgnoreFiles: workspace.respectGitignore === false,
+				disregardGlobalIgnoreFiles: workspace.respectGitignore === false
+			}],
+			filePattern: pathPrefix || undefined,
+			maxResults: 100,
+			sortByScore: true
+		}, token);
+
+		if (token.isCancellationRequested) {
+			return [];
+		}
+
+		const seen = new Set<string>();
+		const suggestions: CompletionItem[] = [];
+		for (const match of searchResult.results) {
+			const relativePath = resourceRelativePath(workspaceRoot, match.resource)?.replace(/\\/g, '/');
+			if (!relativePath || relativePath.startsWith('../') || seen.has(relativePath.toLowerCase())) {
+				continue;
+			}
+
+			seen.add(relativePath.toLowerCase());
+			suggestions.push({
+				label: `@${relativePath}`,
+				kind: CompletionItemKind.File,
+				insertText: `@${relativePath}`,
+				filterText: `@${relativePath}`,
+				sortText: relativePath,
+				detail: localize('horusPromptFileMentionDetail', "Workspace file"),
+				range
+			});
+		}
+
+		return suggestions;
 	}
 
 	private renderViewModeButtons(parent: HTMLElement): ReadonlyMap<HorusPromptEditorViewMode, HTMLButtonElement> {
