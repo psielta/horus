@@ -33,16 +33,17 @@ export class HorusTerminalLauncher implements IHorusTerminalLauncher {
 		const launchCommand = this.resolveLaunchCommand(agent);
 		const followUp = this.resolveFollowUp(agent, prompt.content, submitPrompt);
 		const instance = await this.terminalService.createTerminal({
+			location: TerminalLocation.Panel,
 			config: {
 				name: this.getTerminalName(prompt, agent),
 				cwd: URI.file(workspace.absolutePath)
 			}
 		});
 
-		if (instance.target !== TerminalLocation.Editor) {
-			this.terminalService.setActiveInstance(instance);
-			this.terminalGroupService.showPanel(true);
-		}
+		this.terminalService.setActiveInstance(instance);
+		await this.terminalGroupService.showPanel(false);
+		await this.terminalService.revealActiveTerminal(false);
+		await instance.focusWhenReady();
 
 		await instance.sendText(launchCommand, true);
 		if (followUp) {
