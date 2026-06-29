@@ -23,7 +23,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { IHorusStorageService } from '../../../../../platform/horus/common/horusStorage.js';
 import { extractHorusFileMentions } from '../../../../../platform/horus/common/horusMentions.js';
-import { HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentStatus, HorusPrompt, HorusPromptKind, HorusPromptStatus, HorusTargetAgent, HorusWorkspace } from '../../../../../platform/horus/common/horusTypes.js';
+import { HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentStatus, HorusPrompt, HorusPromptKind, HorusPromptStatus, HorusPromptTerminalSession, HorusPromptTerminalSessionStatus, HorusTargetAgent, HorusWorkspace } from '../../../../../platform/horus/common/horusTypes.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IMarkdownRendererService } from '../../../../../platform/markdown/browser/markdownRenderer.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
@@ -37,6 +37,7 @@ import { ISearchService, QueryType } from '../../../../services/search/common/se
 import { horusWorkbenchState } from '../horusWorkbenchState.js';
 import { HorusCommandId } from '../../common/horus.js';
 import { HorusPromptEditorInput } from './promptEditorInput.js';
+import { defaultTerminalLaunchForPrompt, HorusTerminalAgentLaunch, HorusTerminalLauncher } from '../horusTerminalLauncher.js';
 
 interface HorusPromptEditorElements {
 	readonly root: HTMLElement;
@@ -52,6 +53,7 @@ interface HorusPromptEditorElements {
 	readonly viewModeButtons: ReadonlyMap<HorusPromptEditorViewMode, HTMLButtonElement>;
 	readonly validation: HTMLElement;
 	readonly linkedPlan: HTMLElement;
+	readonly terminalControls: HTMLElement;
 	readonly statusMessage: HTMLElement;
 	readonly metadata: HTMLElement;
 }
@@ -87,6 +89,7 @@ export class HorusPromptEditor extends EditorPane {
 
 	private readonly contentDisposables = this._register(new DisposableStore());
 	private readonly previewDisposables = this._register(new DisposableStore());
+	private readonly terminalControlsDisposables = this._register(new DisposableStore());
 	private readonly mentionValidationScheduler = this._register(new RunOnceScheduler(() => this.validateMentions().catch(error => this.showStatus(String(error), true)), 300));
 	private readonly previewRenderScheduler = this._register(new RunOnceScheduler(() => this.renderMarkdownPreview(), 150));
 
@@ -122,6 +125,9 @@ export class HorusPromptEditor extends EditorPane {
 		this._register(this.horusStorageService.onDidChangeData(event => {
 			if (this.currentPrompt && (event.kind === 'linkedDocument' || event.kind === 'prompt' || event.kind === 'storage')) {
 				this.renderLinkedPlanSummary().catch(error => this.showStatus(String(error), true));
+			}
+			if (this.currentPrompt && (event.kind === 'terminalSession' || event.kind === 'prompt' || event.kind === 'storage')) {
+				this.renderTerminalControls().catch(error => this.showStatus(String(error), true));
 			}
 		}));
 	}
@@ -163,6 +169,7 @@ export class HorusPromptEditor extends EditorPane {
 	private clearEditorContent(): void {
 		this.previewRenderScheduler.cancel();
 		this.previewDisposables.clear();
+		this.terminalControlsDisposables.clear();
 		this.currentInput?.setSaveHandler(undefined);
 		this.currentInput?.setRevertHandler(undefined);
 		this.mentionDecorations?.clear();
@@ -266,6 +273,7 @@ export class HorusPromptEditor extends EditorPane {
 		saveButton.textContent = localize('horusPromptEditorSave', "Save Prompt");
 
 		const linkedPlan = DOM.append(root, DOM.$('.horus-editor-linked-plan'));
+		const terminalControls = DOM.append(root, DOM.$('.horus-editor-terminals'));
 		const editorBody = DOM.append(root, DOM.$('.horus-editor-body'));
 		const editorContainer = DOM.append(editorBody, DOM.$('.horus-editor-content'));
 		editorContainer.setAttribute('aria-label', localize('horusPromptEditorContentAriaLabel', "Horus prompt Markdown editor. Mention workspace files with @path/to/file."));
@@ -275,7 +283,7 @@ export class HorusPromptEditor extends EditorPane {
 
 		const validation = DOM.append(root, DOM.$('.horus-editor-mentions'));
 
-		this.elements = { root, title, targetAgent, kind, status, editorBody, editorContainer, previewContainer, createChildButton, saveButton, viewModeButtons, validation, linkedPlan, statusMessage, metadata };
+		this.elements = { root, title, targetAgent, kind, status, editorBody, editorContainer, previewContainer, createChildButton, saveButton, viewModeButtons, validation, linkedPlan, terminalControls, statusMessage, metadata };
 		this.currentInput?.setSaveHandler(() => this.save());
 		this.currentInput?.setRevertHandler(() => this.revertDraft());
 
@@ -292,6 +300,7 @@ export class HorusPromptEditor extends EditorPane {
 		this.contentDisposables.add(DOM.addDisposableListener(comparePlanButton, DOM.EventType.CLICK, () => this.commandService.executeCommand(HorusCommandId.OpenLinkedPlanDiff, prompt.id)));
 		this.applyViewMode();
 		this.renderLinkedPlanSummary().catch(error => this.showStatus(String(error), true));
+		this.renderTerminalControls().catch(error => this.showStatus(String(error), true));
 		this.schedulePreviewRender();
 		this.showStatus(localize('horusPromptEditorReady', "Ready."), false);
 		this.updateDirtyState();
@@ -341,6 +350,172 @@ export class HorusPromptEditor extends EditorPane {
 			case HorusLinkedDocumentStatus.Draft:
 				return localize('horusPromptEditorLinkedPlanDraft', "draft");
 		}
+	}
+
+	private async renderTerminalControls(): Promise<void> {
+		if (!this.elements || !this.currentPrompt) {
+			return;
+		}
+
+		this.terminalControlsDisposables.clear();
+		DOM.clearNode(this.elements.terminalControls);
+
+		const prompt = this.currentPrompt;
+		const sessions = await this.horusStorageService.listPromptTerminalSessions(prompt.id);
+		if (!this.elements || this.currentPrompt?.id !== prompt.id) {
+			return;
+		}
+
+		const activeCount = sessions.filter(session => session.status === HorusPromptTerminalSessionStatus.Active).length;
+		const header = DOM.append(this.elements.terminalControls, DOM.$('.horus-editor-terminal-header'));
+		const title = DOM.append(header, DOM.$('.horus-editor-terminal-title'));
+		title.textContent = localize('horusPromptEditorLinkedTerminals', "Linked Terminals");
+		const meta = DOM.append(header, DOM.$('.horus-editor-terminal-meta'));
+		meta.textContent = localize('horusPromptEditorLinkedTerminalMeta', "{0}/{1} active", activeCount, sessions.length);
+
+		const actions = DOM.append(this.elements.terminalControls, DOM.$('.horus-editor-terminal-actions'));
+		this.renderTerminalButton(actions, localize('horusPromptEditorRunTerminal', "Run"), () => this.launchTerminal(defaultTerminalLaunchForPrompt(prompt), false));
+		this.renderTerminalButton(actions, localize('horusPromptEditorSubmitTerminal', "Submit Prompt"), () => this.launchTerminal(defaultTerminalLaunchForPrompt(prompt), true));
+		this.renderTerminalButton(actions, localize('horusPromptEditorClaudePlanTerminal', "Claude Plan"), () => this.launchTerminal(HorusTerminalAgentLaunch.ClaudePlan, false));
+		this.renderTerminalButton(actions, localize('horusPromptEditorCodexTerminal', "Codex"), () => this.launchTerminal(HorusTerminalAgentLaunch.Codex, true));
+
+		const list = DOM.append(this.elements.terminalControls, DOM.$('.horus-editor-terminal-list'));
+		if (!sessions.length) {
+			const empty = DOM.append(list, DOM.$('.horus-editor-terminal-empty'));
+			empty.textContent = localize('horusPromptEditorNoLinkedTerminals', "No terminals linked yet. Use Run or Submit Prompt to create one.");
+			return;
+		}
+
+		for (const session of sessions) {
+			this.renderTerminalSession(list, session);
+		}
+	}
+
+	private renderTerminalSession(parent: HTMLElement, session: HorusPromptTerminalSession): void {
+		const item = DOM.append(parent, DOM.$('.horus-editor-terminal-session'));
+		const header = DOM.append(item, DOM.$('.horus-editor-terminal-session-header'));
+		const title = DOM.append(header, DOM.$('.horus-editor-terminal-session-title'));
+		title.textContent = session.terminalName;
+
+		const isActive = session.status === HorusPromptTerminalSessionStatus.Active;
+		const status = DOM.append(header, DOM.$(`.horus-editor-terminal-session-status.${isActive ? 'active' : 'closed'}`));
+		status.textContent = isActive
+			? localize('horusPromptEditorTerminalActive', "Active")
+			: localize('horusPromptEditorTerminalClosed', "Closed");
+
+		const instance = session.terminalInstanceId !== null
+			? localize('horusPromptEditorTerminalInstance', "Terminal #{0}", session.terminalInstanceId)
+			: localize('horusPromptEditorTerminalNoInstance', "Terminal instance unknown");
+		const description = DOM.append(item, DOM.$('.horus-editor-terminal-session-description'));
+		description.textContent = localize('horusPromptEditorTerminalDescription', "{0} - {1} - started {2}",
+			session.agentName,
+			instance,
+			new Date(session.startedAtUtc).toLocaleString());
+
+		const command = DOM.append(item, DOM.$('code.horus-editor-terminal-session-command'));
+		command.textContent = session.launchCommand;
+
+		if (!isActive || session.terminalInstanceId === null) {
+			if (session.endedAtUtc) {
+				const closedAt = DOM.append(item, DOM.$('.horus-editor-terminal-session-description'));
+				closedAt.textContent = localize('horusPromptEditorTerminalEndedAt', "Closed {0}", new Date(session.endedAtUtc).toLocaleString());
+			}
+			return;
+		}
+
+		const actions = DOM.append(item, DOM.$('.horus-editor-terminal-session-actions'));
+		this.renderTerminalButton(actions, localize('horusPromptEditorFocusTerminal', "Focus"), () => this.focusTerminalSession(session));
+		this.renderTerminalButton(actions, localize('horusPromptEditorKillTerminal', "Kill"), () => this.killTerminalSession(session));
+	}
+
+	private renderTerminalButton(parent: HTMLElement, label: string, handler: () => Promise<void>): HTMLButtonElement {
+		const button = DOM.append(parent, DOM.$('button.horus-button.horus-editor-terminal-button')) as HTMLButtonElement;
+		button.type = 'button';
+		button.textContent = label;
+		this.terminalControlsDisposables.add(DOM.addDisposableListener(button, DOM.EventType.CLICK, () => {
+			button.disabled = true;
+			handler()
+				.catch(error => this.notificationService.error(error))
+				.finally(() => {
+					button.disabled = false;
+				});
+		}));
+		return button;
+	}
+
+	private async launchTerminal(agent: HorusTerminalAgentLaunch, submitPrompt: boolean): Promise<void> {
+		if (!this.currentPrompt) {
+			return;
+		}
+
+		if (this.dirty) {
+			const saved = await this.save();
+			if (!saved || !this.currentPrompt) {
+				return;
+			}
+		}
+
+		const workspace = await this.resolveCurrentWorkspace();
+		if (!workspace) {
+			throw new Error(localize('horusPromptEditorTerminalWorkspaceMissing', "The prompt workspace was not found."));
+		}
+
+		const session = await this.instantiationService.createInstance(HorusTerminalLauncher).launchPrompt(this.currentPrompt, workspace, agent, submitPrompt);
+		this.showStatus(localize('horusPromptEditorTerminalLaunched', "Linked terminal created: {0}", session.terminalName), false);
+		await this.renderTerminalControls();
+	}
+
+	private async focusTerminalSession(session: HorusPromptTerminalSession): Promise<void> {
+		if (session.terminalInstanceId === null) {
+			await this.horusStorageService.updatePromptTerminalSession({
+				id: session.id,
+				status: HorusPromptTerminalSessionStatus.Closed,
+				endedAtUtc: new Date().toISOString()
+			});
+			await this.renderTerminalControls();
+			return;
+		}
+
+		const focused = await this.instantiationService.createInstance(HorusTerminalLauncher).focusTerminalInstance(session.terminalInstanceId);
+		const now = new Date().toISOString();
+		await this.horusStorageService.updatePromptTerminalSession({
+			id: session.id,
+			status: focused ? HorusPromptTerminalSessionStatus.Active : HorusPromptTerminalSessionStatus.Closed,
+			lastActivatedAtUtc: focused ? now : undefined,
+			endedAtUtc: focused ? undefined : now
+		});
+		if (!focused) {
+			throw new Error(localize('horusPromptEditorTerminalNotFound', "This terminal is no longer available. The linked session was marked as closed."));
+		}
+		await this.renderTerminalControls();
+	}
+
+	private async killTerminalSession(session: HorusPromptTerminalSession): Promise<void> {
+		if (session.terminalInstanceId !== null) {
+			await this.instantiationService.createInstance(HorusTerminalLauncher).killTerminalInstance(session.terminalInstanceId);
+		}
+
+		await this.horusStorageService.updatePromptTerminalSession({
+			id: session.id,
+			status: HorusPromptTerminalSessionStatus.Closed,
+			endedAtUtc: new Date().toISOString()
+		});
+		this.showStatus(localize('horusPromptEditorTerminalKilled', "Linked terminal marked as closed."), false);
+		await this.renderTerminalControls();
+	}
+
+	private async resolveCurrentWorkspace(): Promise<HorusWorkspace | undefined> {
+		if (this.currentWorkspace) {
+			return this.currentWorkspace;
+		}
+
+		if (!this.currentPrompt) {
+			return undefined;
+		}
+
+		const prompt = this.currentPrompt;
+		this.currentWorkspace = (await this.horusStorageService.listWorkspaces()).find(candidate => candidate.id === prompt.workingDirectoryId);
+		return this.currentWorkspace;
 	}
 
 	private createMarkdownEditor(container: HTMLElement, prompt: HorusPrompt): void {
