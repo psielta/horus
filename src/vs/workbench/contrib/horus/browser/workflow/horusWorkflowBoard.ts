@@ -60,6 +60,7 @@ type WebviewMessage =
 	| { readonly command: 'saveTaskPhases'; readonly promptId: string; readonly rowVersion: string; readonly value?: string }
 	| { readonly command: 'launchTerminal'; readonly promptId: string; readonly agent?: string; readonly submitPrompt?: string }
 	| { readonly command: 'focusTerminal'; readonly terminalSessionId?: string; readonly terminalInstanceId?: string }
+	| { readonly command: 'killTerminal'; readonly terminalSessionId?: string; readonly terminalInstanceId?: string }
 	| { readonly command: 'dropTask'; readonly promptId: string; readonly targetColumnId: string; readonly targetPromptId?: string };
 
 let activeBoard: HorusWorkflowBoardPanel | undefined;
@@ -317,6 +318,9 @@ class HorusWorkflowBoardController extends Disposable {
 				case 'focusTerminal':
 					await this.focusTerminal(message.terminalSessionId, message.terminalInstanceId);
 					break;
+				case 'killTerminal':
+					await this.killTerminal(message.terminalSessionId, message.terminalInstanceId);
+					break;
 				case 'dropTask':
 					await this.dropTask(message.promptId, message.targetColumnId, message.targetPromptId);
 					break;
@@ -374,6 +378,24 @@ class HorusWorkflowBoardController extends Disposable {
 
 		if (!focused) {
 			throw new Error('This terminal is no longer available. Run the prompt again to create a new linked terminal.');
+		}
+	}
+
+	private async killTerminal(terminalSessionId: string | undefined, terminalInstanceIdValue: string | undefined): Promise<void> {
+		const terminalInstanceId = this.parseRequiredNumber(terminalInstanceIdValue, 'terminal instance id');
+		const killed = await this.instantiationService.createInstance(HorusTerminalLauncher).killTerminalInstance(terminalInstanceId);
+		const now = new Date().toISOString();
+
+		if (terminalSessionId) {
+			await this.horusStorageService.updatePromptTerminalSession({
+				id: terminalSessionId,
+				status: HorusPromptTerminalSessionStatus.Closed,
+				endedAtUtc: now
+			});
+		}
+
+		if (!killed) {
+			throw new Error('This terminal was not found. The linked session was marked as closed.');
 		}
 	}
 
@@ -780,6 +802,9 @@ class HorusWorkflowBoardController extends Disposable {
 		const focusAction = isActive && session.terminalInstanceId !== null
 			? `<button data-command="focusTerminal" data-terminal-session-id="${escapeAttribute(session.id)}" data-terminal-instance-id="${session.terminalInstanceId}">${escapeHtml(localize('horusFocusTerminal', "Focus"))}</button>`
 			: '';
+		const killAction = isActive && session.terminalInstanceId !== null
+			? `<button data-command="killTerminal" data-terminal-session-id="${escapeAttribute(session.id)}" data-terminal-instance-id="${session.terminalInstanceId}">${escapeHtml(localize('horusKillTerminal', "Kill"))}</button>`
+			: '';
 		const endedLabel = session.endedAtUtc
 			? `<span>${escapeHtml(localize('horusTerminalEndedAt', "Closed {0}", new Date(session.endedAtUtc).toLocaleString()))}</span>`
 			: '';
@@ -796,7 +821,7 @@ class HorusWorkflowBoardController extends Disposable {
 		${endedLabel}
 	</div>
 	<code>${escapeHtml(session.launchCommand)}</code>
-	${focusAction ? `<div class="details-actions">${focusAction}</div>` : ''}
+	${focusAction || killAction ? `<div class="details-actions">${focusAction}${killAction}</div>` : ''}
 </article>`;
 	}
 

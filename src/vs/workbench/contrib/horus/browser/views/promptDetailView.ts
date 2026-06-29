@@ -6,7 +6,7 @@ import { IContextMenuService } from '../../../../../platform/contextview/browser
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IHorusStorageService } from '../../../../../platform/horus/common/horusStorage.js';
-import { HorusLinkedDocument, HorusLinkedDocumentStatus, HorusPrompt } from '../../../../../platform/horus/common/horusTypes.js';
+import { HorusLinkedDocument, HorusLinkedDocumentStatus, HorusPrompt, HorusPromptTerminalSession, HorusPromptTerminalSessionStatus } from '../../../../../platform/horus/common/horusTypes.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
@@ -14,6 +14,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IViewletViewOptions } from '../../../../browser/parts/views/viewsViewlet.js';
 import { IViewDescriptorService } from '../../../../common/views.js';
 import { HorusCommandId } from '../../common/horus.js';
+import { HorusTerminalLauncher } from '../horusTerminalLauncher.js';
 import { horusWorkbenchState } from '../horusWorkbenchState.js';
 import { HorusViewPane } from './horusViewPane.js';
 
@@ -26,17 +27,17 @@ export class HorusPromptDetailView extends HorusViewPane {
 		@IConfigurationService configurationService: IConfigurationService,
 		@IContextKeyService contextKeyService: IContextKeyService,
 		@IViewDescriptorService viewDescriptorService: IViewDescriptorService,
-		@IInstantiationService instantiationService: IInstantiationService,
+		@IInstantiationService private readonly horusInstantiationService: IInstantiationService,
 		@IOpenerService openerService: IOpenerService,
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@IHorusStorageService private readonly horusStorageService: IHorusStorageService,
 		@ICommandService private readonly commandService: ICommandService
 	) {
-		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
+		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, horusInstantiationService, openerService, themeService, hoverService);
 
 		this._register(this.horusStorageService.onDidChangeData(event => {
-			if (event.kind === 'prompt' || event.kind === 'linkedDocument' || event.kind === 'storage') {
+			if (event.kind === 'prompt' || event.kind === 'linkedDocument' || event.kind === 'terminalSession' || event.kind === 'storage') {
 				this.refresh().catch(error => this.renderMessage(String(error)));
 			}
 		}));
@@ -74,6 +75,7 @@ export class HorusPromptDetailView extends HorusViewPane {
 		metadata.textContent = localize('horusPromptMetadata', "Version {0} - Updated {1}", prompt.currentVersion, new Date(prompt.updatedAtUtc).toLocaleString());
 
 		await this.renderLinkedPlan(prompt);
+		await this.renderTerminalSessions(prompt);
 		await this.renderChildPrompts(prompt);
 	}
 
@@ -155,6 +157,102 @@ export class HorusPromptDetailView extends HorusViewPane {
 				this.commandService.executeCommand(HorusCommandId.OpenPrompt, child.id);
 			}));
 		}
+	}
+
+	private async renderTerminalSessions(prompt: HorusPrompt): Promise<void> {
+		if (!this.horusBody) {
+			return;
+		}
+
+		const sessions = await this.horusStorageService.listPromptTerminalSessions(prompt.id);
+		const activeCount = sessions.filter(session => session.status === HorusPromptTerminalSessionStatus.Active).length;
+		const section = DOM.append(this.horusBody, DOM.$('.horus-detail-section'));
+		const heading = DOM.append(section, DOM.$('.horus-detail-section-title'));
+		heading.textContent = localize('horusLinkedTerminalsDetailSection', "Linked Terminals");
+
+		const meta = DOM.append(section, DOM.$('.horus-detail-meta'));
+		meta.textContent = localize('horusLinkedTerminalsDetailMeta', "{0}/{1} active", activeCount, sessions.length);
+
+		if (!sessions.length) {
+			const empty = DOM.append(section, DOM.$('.horus-detail-meta'));
+			empty.textContent = localize('horusNoLinkedTerminalsDetail', "No terminals are linked to this prompt yet.");
+			return;
+		}
+
+		const list = DOM.append(section, DOM.$('.horus-terminal-session-list'));
+		for (const session of sessions) {
+			this.renderTerminalSession(list, session);
+		}
+	}
+
+	private renderTerminalSession(container: HTMLElement, session: HorusPromptTerminalSession): void {
+		const item = DOM.append(container, DOM.$('.horus-terminal-session'));
+		const title = DOM.append(item, DOM.$('.horus-terminal-session-title'));
+		title.textContent = session.terminalName;
+
+		const status = session.status === HorusPromptTerminalSessionStatus.Active
+			? localize('horusTerminalSessionActive', "active")
+			: localize('horusTerminalSessionClosed', "closed");
+		const instance = session.terminalInstanceId !== null
+			? localize('horusTerminalSessionInstance', "Terminal #{0}", session.terminalInstanceId)
+			: localize('horusTerminalSessionNoInstance', "Terminal instance unknown");
+
+		const description = DOM.append(item, DOM.$('.horus-terminal-session-description'));
+		description.textContent = localize('horusTerminalSessionDescription', "{0} - {1} - {2} - started {3}",
+			status,
+			session.agentName,
+			instance,
+			new Date(session.startedAtUtc).toLocaleString());
+
+		const command = DOM.append(item, DOM.$('code.horus-terminal-session-command'));
+		command.textContent = session.launchCommand;
+
+		if (session.status !== HorusPromptTerminalSessionStatus.Active || session.terminalInstanceId === null) {
+			return;
+		}
+
+		const actions = DOM.append(item, DOM.$('.horus-detail-actions'));
+		actions.appendChild(this.renderButton(localize('horusFocusLinkedTerminalDetail', "Focus"), () => {
+			this.focusTerminalSession(session).catch(error => this.renderMessage(String(error)));
+		}));
+		actions.appendChild(this.renderButton(localize('horusKillLinkedTerminalDetail', "Kill"), () => {
+			this.killTerminalSession(session).catch(error => this.renderMessage(String(error)));
+		}));
+	}
+
+	private async focusTerminalSession(session: HorusPromptTerminalSession): Promise<void> {
+		if (session.terminalInstanceId === null) {
+			await this.horusStorageService.updatePromptTerminalSession({
+				id: session.id,
+				status: HorusPromptTerminalSessionStatus.Closed,
+				endedAtUtc: new Date().toISOString()
+			});
+			await this.refresh();
+			return;
+		}
+
+		const focused = await this.horusInstantiationService.createInstance(HorusTerminalLauncher).focusTerminalInstance(session.terminalInstanceId);
+		const now = new Date().toISOString();
+		await this.horusStorageService.updatePromptTerminalSession({
+			id: session.id,
+			status: focused ? HorusPromptTerminalSessionStatus.Active : HorusPromptTerminalSessionStatus.Closed,
+			lastActivatedAtUtc: focused ? now : undefined,
+			endedAtUtc: focused ? undefined : now
+		});
+		await this.refresh();
+	}
+
+	private async killTerminalSession(session: HorusPromptTerminalSession): Promise<void> {
+		if (session.terminalInstanceId !== null) {
+			await this.horusInstantiationService.createInstance(HorusTerminalLauncher).killTerminalInstance(session.terminalInstanceId);
+		}
+
+		await this.horusStorageService.updatePromptTerminalSession({
+			id: session.id,
+			status: HorusPromptTerminalSessionStatus.Closed,
+			endedAtUtc: new Date().toISOString()
+		});
+		await this.refresh();
 	}
 
 	private getLinkedPlanStatusLabel(document: HorusLinkedDocument): string {

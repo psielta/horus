@@ -5,7 +5,7 @@ import { IHorusStorageService } from '../../../../platform/horus/common/horusSto
 import { HorusPrompt, HorusPromptTerminalSession, HorusPromptTerminalSessionStatus, HorusTargetAgent, HorusWorkspace } from '../../../../platform/horus/common/horusTypes.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
-import { TerminalLocation } from '../../../../platform/terminal/common/terminal.js';
+import { TerminalExitReason, TerminalLocation } from '../../../../platform/terminal/common/terminal.js';
 import { ITerminalGroupService, ITerminalService } from '../../terminal/browser/terminal.js';
 
 export const IHorusTerminalLauncher = createDecorator<IHorusTerminalLauncher>('horusTerminalLauncher');
@@ -21,6 +21,7 @@ export interface IHorusTerminalLauncher {
 	readonly _serviceBrand: undefined;
 	launchPrompt(prompt: HorusPrompt, workspace: HorusWorkspace, agent: HorusTerminalAgentLaunch, submitPrompt?: boolean): Promise<HorusPromptTerminalSession>;
 	focusTerminalInstance(terminalInstanceId: number): Promise<boolean>;
+	killTerminalInstance(terminalInstanceId: number): Promise<boolean>;
 }
 
 export class HorusTerminalLauncher implements IHorusTerminalLauncher {
@@ -91,6 +92,16 @@ export class HorusTerminalLauncher implements IHorusTerminalLauncher {
 		this.terminalService.setActiveInstance(instance);
 		await this.terminalGroupService.showPanel(false);
 		await this.terminalService.focusInstance(instance);
+		return true;
+	}
+
+	async killTerminalInstance(terminalInstanceId: number): Promise<boolean> {
+		const instance = this.terminalService.getInstanceFromId(terminalInstanceId);
+		if (!instance) {
+			return false;
+		}
+
+		instance.dispose(TerminalExitReason.User);
 		return true;
 	}
 

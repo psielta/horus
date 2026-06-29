@@ -160,6 +160,44 @@
 	font-size: 11px;
 }
 
+.horus-terminal-session-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.horus-terminal-session {
+	padding: 7px;
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 4px;
+	background: var(--vscode-editorWidget-background);
+}
+
+.horus-terminal-session-title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 600;
+}
+
+.horus-terminal-session-description {
+	margin-top: 3px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+}
+
+.horus-terminal-session-command {
+	display: block;
+	margin-top: 5px;
+	padding: 4px 6px;
+	overflow-wrap: anywhere;
+	color: var(--vscode-textPreformat-foreground);
+	background: var(--vscode-textCodeBlock-background);
+	border-radius: 3px;
+	font-family: var(--vscode-editor-font-family);
+	font-size: 11px;
+}
+
 .horus-prompt-editor {
 	box-sizing: border-box;
 	height: 100%;
