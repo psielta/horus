@@ -16,6 +16,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { nativeHoverDelegate } from '../../../../../platform/hover/browser/hover.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IStatusbarService, StatusbarAlignment } from '../../../../services/statusbar/browser/statusbar.js';
+import { HorusAgentUsageSnapshot } from '../../../horus/browser/agentUsage/horusAgentUsage.js';
 import { AI_STATS_SETTING_ID } from '../settingIds.js';
 import type { AiStatsFeature } from './aiStatsFeature.js';
 import { ChartViewMode, createAiStatsChart, ISessionData } from './aiStatsChart.js';
@@ -75,6 +76,13 @@ export class AiStatsStatusBar extends Disposable {
 
 
 	private _createStatusBar() {
+		const horusUsageRate = this._aiStatsFeature.horusAgentUsage.snapshot.map(snapshot => {
+			const rates = snapshot.windows
+				.map(window => window.usedPercent)
+				.filter((value): value is number => typeof value === 'number');
+			return rates.length ? Math.max(...rates) : this._aiStatsFeature.aiRate.get();
+		});
+
 		return n.div({
 			style: {
 				height: '100%',
@@ -114,7 +122,7 @@ export class AiStatsStatusBar extends Disposable {
 					}, [
 						n.div({
 							style: {
-								width: this._aiStatsFeature.aiRate.map(v => `${v * 100}%`),
+								width: horusUsageRate.map(v => `${v * 100}%`),
 								backgroundColor: 'currentColor',
 							}
 						})
@@ -129,6 +137,9 @@ export interface IAiStatsHoverData {
 	readonly aiRate: IObservable<number>;
 	readonly acceptedInlineSuggestionsToday: IObservable<number>;
 	readonly sessions: IObservable<readonly ISessionData[]>;
+	readonly horusAgentUsage: {
+		readonly snapshot: IObservable<HorusAgentUsageSnapshot>;
+	};
 }
 
 export interface IAiStatsHoverOptions {
@@ -202,6 +213,27 @@ export function createAiStatsHover(options: IAiStatsHoverOptions) {
 				localize('text1', "AI vs Typing Average: {0}", aiRatePercent.get()),
 			]),
 		]),
+		derived(reader => {
+			const snapshot = options.data.horusAgentUsage.snapshot.read(reader);
+			return n.div({
+				style: {
+					marginTop: '8px',
+					borderTop: '1px solid var(--vscode-widget-border)',
+					paddingTop: '8px',
+					display: 'grid',
+					gap: '4px',
+				}
+			}, [
+				n.div({ class: 'header' }, [localize('horusAgentUsageHeader', "Claude/Codex usage")]),
+				...snapshot.windows.map(window => n.div({ style: { display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px' } }, [
+					n.div({}, [`${window.provider} · ${window.label}${window.plan ? ` · ${window.plan}` : ''}`]),
+					n.div({}, [formatHorusUsageWindow(window)]),
+					window.resetsAt ? n.div({ style: { gridColumn: '1 / -1', color: 'var(--vscode-descriptionForeground)' } }, [localize('horusAgentUsageReset', "Resets {0}", new Date(window.resetsAt).toLocaleString())]) : '',
+				])),
+				snapshot.windows.length ? '' : n.div({ style: { color: 'var(--vscode-descriptionForeground)' } }, [localize('horusAgentUsageNoData', "No Claude/Codex usage data found yet.")]),
+				snapshot.error ? n.div({ style: { color: 'var(--vscode-errorForeground)' } }, [snapshot.error]) : '',
+			]);
+		}),
 		n.div({ style: { flex: 1, paddingRight: '4px' } }, [
 			localize('text2', "Accepted inline suggestions today: {0}", options.data.acceptedInlineSuggestionsToday.get()),
 		]),
@@ -255,6 +287,16 @@ export function createAiStatsHover(options: IAiStatsHoverOptions) {
 			}),
 		]),
 	]);
+}
+
+function formatHorusUsageWindow(window: HorusAgentUsageSnapshot['windows'][number]): string {
+	if (typeof window.usedPercent === 'number') {
+		return `${Math.round(window.usedPercent * 100)}%`;
+	}
+	if (typeof window.usedTokens === 'number') {
+		return `${window.usedTokens.toLocaleString()} tokens`;
+	}
+	return window.source;
 }
 
 function actionBar(actions: { action: IAction; options: IActionOptions }[], options?: IActionBarOptions) {

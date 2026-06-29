@@ -59,6 +59,16 @@ function createSampleDataWithSessions(): IAiStatsHoverData {
 		aiRate: observableValue('aiRate', aiRate),
 		acceptedInlineSuggestionsToday: observableValue('acceptedToday', acceptedToday),
 		sessions: observableValue('sessions', fakeSessions),
+		horusAgentUsage: {
+			snapshot: observableValue('horusAgentUsage', {
+				updatedAt: baseTime,
+				error: null,
+				windows: [
+					{ provider: 'Claude', label: 'Sessão 5h', plan: 'Max', usedPercent: 0.42, usedTokens: null, limitTokens: null, resetsAt: null, source: 'api' },
+					{ provider: 'Codex', label: 'Semana', plan: 'Pro', usedPercent: 0.18, usedTokens: null, limitTokens: null, resetsAt: null, source: 'local' }
+				]
+			})
+		}
 	};
 }
 
@@ -67,6 +77,9 @@ function createEmptyData(): IAiStatsHoverData {
 		aiRate: observableValue('aiRate', 0),
 		acceptedInlineSuggestionsToday: observableValue('acceptedToday', 0),
 		sessions: observableValue('sessions', []),
+		horusAgentUsage: {
+			snapshot: observableValue('horusAgentUsage', { updatedAt: 0, windows: [], error: null })
+		}
 	};
 }
 

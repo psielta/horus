@@ -12,12 +12,14 @@ import { AnnotatedStringEdit } from '../../../../../editor/common/core/edits/str
 import { isAiEdit, isUserEdit } from '../../../../../editor/common/textModelEditSource.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
+import { HorusAgentUsageMonitor } from '../../../horus/browser/agentUsage/horusAgentUsage.js';
 import { AnnotatedDocuments } from '../helpers/annotatedDocuments.js';
 import { AiStatsStatusBar } from './aiStatsStatusBar.js';
 
 export class AiStatsFeature extends Disposable {
 	private readonly _data: IValue<IData>;
 	private readonly _dataVersion = observableValue(this, 0);
+	public readonly horusAgentUsage: HorusAgentUsageMonitor;
 
 	constructor(
 		annotatedDocuments: AnnotatedDocuments,
@@ -25,6 +27,8 @@ export class AiStatsFeature extends Disposable {
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 	) {
 		super();
+
+		this.horusAgentUsage = this._register(this._instantiationService.createInstance(HorusAgentUsageMonitor));
 
 		const storedValue = getStoredValue<IData>(this._storageService, 'aiStats', StorageScope.WORKSPACE, StorageTarget.USER);
 		this._data = rateLimitWrite<IData>(storedValue, 1 / 60, this._store);
