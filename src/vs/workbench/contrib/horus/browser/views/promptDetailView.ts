@@ -65,7 +65,6 @@ export class HorusPromptDetailView extends HorusViewPane {
 
 		this.horusBody.appendChild(this.renderButton(localize('horusOpenPromptEditor', "Open Prompt Editor"), () => this.commandService.executeCommand(HorusCommandId.OpenPrompt, prompt.id)));
 		this.horusBody.appendChild(this.renderButton(localize('horusComparePromptVersions', "Compare Prompt Versions"), () => this.commandService.executeCommand(HorusCommandId.OpenPromptVersionDiff, prompt.id)));
-		this.horusBody.appendChild(this.renderButton(localize('horusCreateChildPromptFromDetail', "Create Child Prompt"), () => this.commandService.executeCommand(HorusCommandId.CreateChildPrompt, prompt.id)));
 		this.horusBody.appendChild(this.renderButton(localize('horusLinkPlanFromDetail', "Link Plan"), () => this.commandService.executeCommand(HorusCommandId.LinkPlanToPrompt, prompt.id)));
 
 		const title = DOM.append(this.horusBody, DOM.$('.horus-detail-title'));
@@ -103,7 +102,8 @@ export class HorusPromptDetailView extends HorusViewPane {
 		meta.title = document.absolutePath;
 
 		const actions = DOM.append(section, DOM.$('.horus-detail-actions'));
-		actions.appendChild(this.renderButton(localize('horusOpenLinkedPlanFile', "Open File"), () => this.commandService.executeCommand(HorusCommandId.OpenLinkedPlanFile, document.id)));
+		actions.appendChild(this.renderButton(localize('horusCreateChildPromptFromDetail', "Create Child Prompt"), () => this.commandService.executeCommand(HorusCommandId.CreateChildPrompt, prompt.id)));
+		actions.appendChild(this.renderButton(localize('horusOpenLinkedPlanFile', "Open Plan"), () => this.commandService.executeCommand(HorusCommandId.OpenLinkedPlanFile, document.id)));
 		actions.appendChild(this.renderButton(localize('horusSyncLinkedPlan', "Sync Now"), () => this.commandService.executeCommand(HorusCommandId.SyncLinkedPlan, document.id)));
 		actions.appendChild(this.renderButton(localize('horusCompareLinkedPlanVersions', "Compare Versions"), () => this.commandService.executeCommand(HorusCommandId.OpenLinkedPlanDiff, document.id)));
 		actions.appendChild(this.renderButton(document.status === HorusLinkedDocumentStatus.Paused ? localize('horusResumeLinkedPlan', "Resume Monitoring") : localize('horusPauseLinkedPlan', "Pause Monitoring"), () => {

@@ -11,7 +11,7 @@ import { HorusLinkedDocument, HorusLinkedDocumentStatus, HorusLinkedDocumentVers
 import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
-import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
@@ -25,6 +25,7 @@ import { Extensions as ViewExtensions, IViewContainersRegistry, IViewsRegistry, 
 import { HorusPromptEditor } from './editors/promptEditor.js';
 import { HorusPromptEditorInput } from './editors/promptEditorInput.js';
 import { HorusCommandId, HorusContext, HORUS_PROMPT_DETAIL_VIEW_ID, HORUS_PROMPTS_VIEW_ID, HORUS_VIEW_CONTAINER_ID, HORUS_WORKSPACES_VIEW_ID } from '../common/horus.js';
+import { getHorusChildPromptTemplates, HorusChildPromptTemplate, HorusPromptTemplateInputDefinition, renderHorusChildPromptTemplate } from '../../../../platform/horus/common/horusPromptTemplates.js';
 import { resolveNativeHorusWorkspaces } from './horusNativeWorkspaces.js';
 import { createHorusLinkedDocumentVersionResource, createHorusPromptVersionResource, HorusVersionContentProvider } from './horusVersionContentProvider.js';
 import { horusWorkbenchState } from './horusWorkbenchState.js';
@@ -42,6 +43,10 @@ interface HorusVersionPick<TVersion extends HorusComparableVersion> {
 	readonly description: string;
 	readonly detail?: string;
 	readonly version: TVersion;
+}
+
+interface HorusChildPromptTemplatePick extends IQuickPickItem {
+	readonly template: HorusChildPromptTemplate;
 }
 
 interface HorusComparableVersion {
@@ -246,6 +251,68 @@ async function resolveLinkedPlanForCommand(
 	return document;
 }
 
+async function pickChildPromptTemplate(quickInputService: IQuickInputService): Promise<HorusChildPromptTemplate | undefined> {
+	const pick = await quickInputService.pick(getHorusChildPromptTemplates().map(template => ({
+		label: template.displayName,
+		description: template.description,
+		detail: getChildPromptTemplateMetadata(template),
+		template
+	} satisfies HorusChildPromptTemplatePick)), {
+		placeHolder: localize('horusPickChildPromptTemplate', "Select the child prompt type")
+	});
+
+	return pick?.template;
+}
+
+function getChildPromptTemplateMetadata(template: HorusChildPromptTemplate): string {
+	return template.inputs.length
+		? localize('horusChildPromptTemplateNeedsInput', "Requires: {0}", template.inputs.map(input => input.label).join(', '))
+		: localize('horusChildPromptTemplateNoInput', "No additional input required");
+}
+
+async function collectChildPromptTemplateInputs(
+	quickInputService: IQuickInputService,
+	template: HorusChildPromptTemplate,
+	linkedPlan: HorusLinkedDocument
+): Promise<Readonly<Record<string, string>> | undefined> {
+	const values: Record<string, string> = {};
+
+	for (const input of template.inputs) {
+		const value = await inputChildPromptTemplateValue(quickInputService, input, linkedPlan);
+		if (value === undefined) {
+			return undefined;
+		}
+
+		values[input.key] = value.trim();
+	}
+
+	return values;
+}
+
+async function inputChildPromptTemplateValue(
+	quickInputService: IQuickInputService,
+	input: HorusPromptTemplateInputDefinition,
+	linkedPlan: HorusLinkedDocument
+): Promise<string | undefined> {
+	const existingValue = input.key === 'pullRequest' ? linkedPlan.pullRequestReference ?? '' : '';
+	const value = await quickInputService.input({
+		title: input.label,
+		value: existingValue,
+		prompt: input.multiline ? localize('horusTemplateInputSingleLineLimitation', "{0} Paste concise text here; the native quick input is single-line.", input.helpText) : input.helpText,
+		placeHolder: input.placeholder,
+		ignoreFocusLost: !!input.multiline,
+		validateInput: input.required === false
+			? undefined
+			: async value => value.trim() ? undefined : localize('horusTemplateInputRequired', "{0} is required.", input.label)
+	});
+
+	if (value === undefined) {
+		return undefined;
+	}
+
+	return value.trim();
+}
+
 async function pickVersionPair<TVersion extends HorusComparableVersion>(
 	quickInputService: IQuickInputService,
 	versions: readonly TVersion[],
@@ -394,32 +461,44 @@ registerAction2(class extends Action2 {
 			return;
 		}
 
-		const title = await quickInputService.input({
-			prompt: localize('horusChildPromptTitlePrompt', "Child prompt title"),
-			value: localize('horusChildPromptDefaultTitle', "{0} - child", parent.title)
-		});
-		if (!title) {
+		const linkedPlan = await horusStorageService.getLinkedDocumentForPrompt(parent.id);
+		if (!linkedPlan) {
+			notificationService.info(localize('horusChildPromptRequiresLinkedPlan', "Link a Markdown plan before creating child prompts."));
 			return;
 		}
 
-		const content = await quickInputService.input({
-			prompt: localize('horusChildPromptContentPrompt', "Initial Markdown content"),
-			value: ''
+		const template = await pickChildPromptTemplate(quickInputService);
+		if (!template) {
+			return;
+		}
+
+		const inputs = await collectChildPromptTemplateInputs(quickInputService, template, linkedPlan);
+		if (!inputs) {
+			return;
+		}
+
+		const rendered = renderHorusChildPromptTemplate(template, {
+			absolutePath: linkedPlan.absolutePath,
+			displayName: linkedPlan.displayName ?? linkedPlan.absolutePath,
+			parentPromptContent: parent.content,
+			pullRequestReference: linkedPlan.pullRequestReference,
+			inputs
 		});
 
 		try {
 			const child = await horusStorageService.createPrompt({
 				workingDirectoryId: parent.workingDirectoryId,
 				parentPromptId: parent.id,
-				title,
-				content: content ?? '',
-				targetAgent: parent.targetAgent,
-				kind: parent.kind
+				title: rendered.title,
+				content: rendered.content,
+				targetAgent: template.defaultTargetAgent,
+				kind: template.defaultKind,
+				changeNote: localize('horusChildPromptGeneratedViaTemplate', "Generated via \"{0}\"", template.displayName)
 			});
 			horusWorkbenchState.setSelectedWorkspaceId(parent.workingDirectoryId);
 			horusWorkbenchState.setSelectedPromptId(child.id);
 			await commandService.executeCommand(HorusCommandId.OpenPrompt, child.id);
-			notificationService.info(localize('horusChildPromptCreated', "Child prompt created: {0}", child.title));
+			notificationService.info(localize('horusChildPromptCreated', "Child prompt created from {0}: {1}", template.displayName, child.title));
 		} catch (error) {
 			notificationService.error(error);
 		}
@@ -545,7 +624,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: HorusCommandId.OpenLinkedPlanFile,
-			title: localize2('horusOpenLinkedPlanFileCommand', "Horus: Open Linked Plan File"),
+			title: localize2('horusOpenLinkedPlanFileCommand', "Horus: Open Linked Plan"),
 			category: horusCategory,
 			f1: true,
 			precondition: HorusContext.PromptSelected

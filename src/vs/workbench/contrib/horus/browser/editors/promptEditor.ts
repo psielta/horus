@@ -46,6 +46,7 @@ interface HorusPromptEditorElements {
 	readonly editorBody: HTMLElement;
 	readonly editorContainer: HTMLElement;
 	readonly previewContainer: HTMLElement;
+	readonly createChildButton: HTMLButtonElement;
 	readonly saveButton: HTMLButtonElement;
 	readonly viewModeButtons: ReadonlyMap<HorusPromptEditorViewMode, HTMLButtonElement>;
 	readonly validation: HTMLElement;
@@ -234,6 +235,7 @@ export class HorusPromptEditor extends EditorPane {
 		comparePromptButton.textContent = localize('horusPromptEditorComparePrompt', "Compare Prompt");
 		const createChildButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-toolbar-button')) as HTMLButtonElement;
 		createChildButton.textContent = localize('horusPromptEditorCreateChild', "Create Child");
+		createChildButton.disabled = true;
 		const linkPlanButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-toolbar-button')) as HTMLButtonElement;
 		linkPlanButton.textContent = localize('horusPromptEditorLinkPlan', "Link Plan");
 		const openPlanButton = DOM.append(toolbar, DOM.$('button.horus-button.horus-editor-toolbar-button')) as HTMLButtonElement;
@@ -255,7 +257,7 @@ export class HorusPromptEditor extends EditorPane {
 
 		const validation = DOM.append(root, DOM.$('.horus-editor-mentions'));
 
-		this.elements = { root, title, targetAgent, kind, status, editorBody, editorContainer, previewContainer, saveButton, viewModeButtons, validation, linkedPlan, statusMessage, metadata };
+		this.elements = { root, title, targetAgent, kind, status, editorBody, editorContainer, previewContainer, createChildButton, saveButton, viewModeButtons, validation, linkedPlan, statusMessage, metadata };
 
 		for (const element of [title, targetAgent, kind, status]) {
 			this.contentDisposables.add(DOM.addDisposableListener(element, DOM.EventType.INPUT, () => this.onEditorChanged()));
@@ -283,10 +285,14 @@ export class HorusPromptEditor extends EditorPane {
 		DOM.clearNode(this.elements.linkedPlan);
 		const document = await this.horusStorageService.getLinkedDocumentForPrompt(this.currentPrompt.id);
 		if (!document) {
+			this.elements.createChildButton.disabled = true;
+			this.elements.createChildButton.title = localize('horusPromptEditorCreateChildNeedsPlan', "Link a plan before creating child prompts.");
 			this.elements.linkedPlan.textContent = localize('horusPromptEditorNoLinkedPlan', "No linked plan. Use Link Plan to monitor an external Markdown plan.");
 			return;
 		}
 
+		this.elements.createChildButton.disabled = false;
+		this.elements.createChildButton.title = localize('horusPromptEditorCreateChildFromPlan', "Create a child prompt from the linked plan.");
 		const summary = DOM.append(this.elements.linkedPlan, DOM.$('.horus-editor-linked-plan-summary'));
 		summary.classList.toggle('error', document.status === HorusLinkedDocumentStatus.Error);
 		summary.textContent = this.getLinkedPlanSummary(document);
