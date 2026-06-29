@@ -22,6 +22,12 @@ const workflowBoardViewType = 'horus.workflowBoard';
 type BoardColumnKind = 'no-workflow' | 'phase' | 'done';
 type BoardViewMode = 'kanban' | 'vertical';
 
+interface HorusWorkflowBoardControllerOptions {
+	readonly initialViewMode: BoardViewMode;
+	readonly allowViewModeToggle: boolean;
+	readonly showOpenFullBoard: boolean;
+}
+
 interface BoardColumn {
 	readonly id: string;
 	readonly title: string;
@@ -37,6 +43,7 @@ type WebviewMessage =
 	| { readonly command: 'clearFilters' }
 	| { readonly command: 'setViewMode'; readonly viewMode: BoardViewMode }
 	| { readonly command: 'refresh' }
+	| { readonly command: 'openBoardPanel' }
 	| { readonly command: 'selectPrompt'; readonly promptId: string }
 	| { readonly command: 'openPrompt'; readonly promptId: string }
 	| { readonly command: 'openPlan'; readonly promptId: string }
@@ -98,7 +105,11 @@ class HorusWorkflowBoardPanel extends Disposable {
 			}, workflowBoardViewType, localize('horusWorkflowBoardTitle', "Horus Workflow"), ThemeIcon.fromId('horus-view-icon'), { group: ACTIVE_GROUP });
 
 			this._register(this.input.webview.onDidDispose(() => this.dispose()));
-			this.controller = this._register(this.instantiationService.createInstance(HorusWorkflowBoardController, this.input.webview));
+			this.controller = this._register(this.instantiationService.createInstance(HorusWorkflowBoardController, this.input.webview, {
+				initialViewMode: 'kanban',
+				allowViewModeToggle: true,
+				showOpenFullBoard: false
+			} satisfies HorusWorkflowBoardControllerOptions));
 		}
 
 		await this.refresh();
@@ -144,7 +155,11 @@ export class HorusWorkflowBoardViewResolver extends Disposable {
 		};
 
 		const store = this._register(new DisposableStore());
-		const controller = this.instantiationService.createInstance(HorusWorkflowBoardController, webviewView.webview);
+		const controller = this.instantiationService.createInstance(HorusWorkflowBoardController, webviewView.webview, {
+			initialViewMode: 'vertical',
+			allowViewModeToggle: false,
+			showOpenFullBoard: true
+		} satisfies HorusWorkflowBoardControllerOptions);
 		store.add(controller);
 		store.add(webviewView.onDispose(() => store.dispose()));
 
@@ -160,11 +175,12 @@ class HorusWorkflowBoardController extends Disposable {
 	private columns: readonly BoardColumn[] = [];
 	private selectedPromptId: string | undefined;
 	private filters: HorusWorkflowBoardQuery = {};
-	private viewMode: BoardViewMode = 'kanban';
+	private viewMode: BoardViewMode;
 	private renderSequence = 0;
 
 	constructor(
 		private readonly webview: IWebview,
+		private readonly options: HorusWorkflowBoardControllerOptions,
 		@IHorusStorageService private readonly horusStorageService: IHorusStorageService,
 		@ICommandService private readonly commandService: ICommandService,
 		@INotificationService private readonly notificationService: INotificationService,
@@ -172,6 +188,7 @@ class HorusWorkflowBoardController extends Disposable {
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService
 	) {
 		super();
+		this.viewMode = options.initialViewMode;
 		this._register(this.horusStorageService.onDidChangeData(event => {
 			if (event.kind === 'prompt' || event.kind === 'linkedDocument' || event.kind === 'workflow' || event.kind === 'workspace' || event.kind === 'storage') {
 				this.refresh().catch(error => this.notificationService.error(error));
@@ -218,11 +235,16 @@ class HorusWorkflowBoardController extends Disposable {
 					await this.refresh();
 					break;
 				case 'setViewMode':
-					this.viewMode = message.viewMode === 'vertical' ? 'vertical' : 'kanban';
+					if (this.options.allowViewModeToggle) {
+						this.viewMode = message.viewMode === 'vertical' ? 'vertical' : 'kanban';
+					}
 					await this.refresh();
 					break;
 				case 'refresh':
 					await this.refresh();
+					break;
+				case 'openBoardPanel':
+					await this.commandService.executeCommand(HorusCommandId.OpenWorkflowBoard);
 					break;
 				case 'selectPrompt':
 					this.selectedPromptId = message.promptId;
@@ -493,6 +515,12 @@ class HorusWorkflowBoardController extends Disposable {
 		const nonce = generateUuid();
 		const activeFilters = [this.filters.q, this.filters.promptStatus, this.filters.workflowStatus].filter(value => value !== undefined && value !== '').length;
 		const workspaceLabel = this.currentWorkspace?.name ?? localize('horusNoWorkspaceOpen', "no workspace open");
+		const viewModeAction = this.options.allowViewModeToggle
+			? `<button data-command="setViewMode" data-view-mode="${this.viewMode === 'kanban' ? 'vertical' : 'kanban'}">${escapeHtml(this.viewMode === 'kanban' ? localize('horusVerticalView', "Vertical view") : localize('horusKanbanView', "Kanban view"))}</button>`
+			: '';
+		const openFullBoardAction = this.options.showOpenFullBoard
+			? `<button data-command="openBoardPanel">${escapeHtml(localize('horusOpenFullWorkflowBoard', "Open full board"))}</button>`
+			: '';
 		return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -509,7 +537,8 @@ class HorusWorkflowBoardController extends Disposable {
 			<p>${escapeHtml(localize('horusWorkflowBoardSubtitle', "{0} root prompts tracked in {1}", this.board.length, workspaceLabel))}</p>
 		</div>
 		<div class="toolbar-actions">
-			<button data-command="setViewMode" data-view-mode="${this.viewMode === 'kanban' ? 'vertical' : 'kanban'}">${escapeHtml(this.viewMode === 'kanban' ? localize('horusVerticalView', "Vertical view") : localize('horusKanbanView', "Kanban view"))}</button>
+			${viewModeAction}
+			${openFullBoardAction}
 			<button data-command="refresh">${escapeHtml(localize('horusRefreshBoard', "Refresh"))}</button>
 		</div>
 	</header>
@@ -583,6 +612,7 @@ class HorusWorkflowBoardController extends Disposable {
 	</div>
 	<div class="card-actions">
 		<button data-command="openPrompt" data-prompt-id="${escapeAttribute(task.promptId)}">${escapeHtml(localize('horusOpenPrompt', "Open"))}</button>
+		${task.hasLinkedPlan ? `<button data-command="createChild" data-prompt-id="${escapeAttribute(task.promptId)}">${escapeHtml(localize('horusCreateChildFromCard', "Child"))}</button>` : ''}
 		${task.workflowStatus === null ? `<button data-command="startWorkflow" data-prompt-id="${escapeAttribute(task.promptId)}">${escapeHtml(localize('horusStartWorkflow', "Start"))}</button>` : ''}
 		${task.workflowStatus === HorusWorkflowStatus.Active && task.workflowRowVersion !== null ? `<button data-command="advanceWorkflow" data-prompt-id="${escapeAttribute(task.promptId)}" data-row-version="${task.workflowRowVersion}">${escapeHtml(localize('horusAdvanceWorkflow', "Advance"))}</button>` : ''}
 		${task.workflowStatus === HorusWorkflowStatus.Done && task.workflowRowVersion !== null ? `<button data-command="reopenWorkflow" data-prompt-id="${escapeAttribute(task.promptId)}" data-row-version="${task.workflowRowVersion}">${escapeHtml(localize('horusReopenWorkflow', "Reopen"))}</button>` : ''}
