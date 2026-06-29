@@ -466,6 +466,7 @@ registerAction2(class extends Action2 {
 		const notificationService = accessor.get(INotificationService);
 		const horusStorageService = accessor.get(IHorusStorageService);
 		const commandService = accessor.get(ICommandService);
+		const instantiationService = accessor.get(IInstantiationService);
 
 		const parent = await resolveSelectedPromptForCommand(horusStorageService, notificationService, parentPromptId);
 		if (!parent) {
@@ -532,7 +533,12 @@ registerAction2(class extends Action2 {
 				placeHolder: localize('horusLaunchChildPromptQuestion', "Launch this child prompt in a native terminal?")
 			});
 			if (launch?.launch) {
-				await commandService.executeCommand(HorusCommandId.LaunchPromptTerminal, child.id, { submitPrompt: true } satisfies HorusLaunchPromptTerminalOptions);
+				const workspace = (await horusStorageService.listWorkspaces()).find(candidate => candidate.id === child.workingDirectoryId);
+				if (!workspace) {
+					notificationService.error(localize('horusPromptWorkspaceMissing', "The prompt workspace was not found."));
+					return;
+				}
+				await instantiationService.createInstance(HorusTerminalLauncher).launchPrompt(child, workspace, defaultTerminalLaunchForPrompt(child), true);
 			}
 			notificationService.info(localize('horusChildPromptCreated', "Child prompt created from {0}: {1}", template.displayName, child.title));
 		} catch (error) {

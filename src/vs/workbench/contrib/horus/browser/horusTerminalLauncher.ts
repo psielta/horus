@@ -1,10 +1,12 @@
 import { timeout } from '../../../../base/common/async.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { HorusPrompt, HorusTargetAgent, HorusWorkspace } from '../../../../platform/horus/common/horusTypes.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { TerminalLocation } from '../../../../platform/terminal/common/terminal.js';
 import { ITerminalGroupService, ITerminalService } from '../../terminal/browser/terminal.js';
+import { TerminalCommandId } from '../../terminal/common/terminal.js';
 
 export const IHorusTerminalLauncher = createDecorator<IHorusTerminalLauncher>('horusTerminalLauncher');
 
@@ -25,6 +27,7 @@ export class HorusTerminalLauncher implements IHorusTerminalLauncher {
 	declare readonly _serviceBrand: undefined;
 
 	constructor(
+		@ICommandService private readonly commandService: ICommandService,
 		@ITerminalService private readonly terminalService: ITerminalService,
 		@ITerminalGroupService private readonly terminalGroupService: ITerminalGroupService
 	) { }
@@ -32,18 +35,21 @@ export class HorusTerminalLauncher implements IHorusTerminalLauncher {
 	async launchPrompt(prompt: HorusPrompt, workspace: HorusWorkspace, agent: HorusTerminalAgentLaunch, submitPrompt = false): Promise<void> {
 		const launchCommand = this.resolveLaunchCommand(agent);
 		const followUp = this.resolveFollowUp(agent, prompt.content, submitPrompt);
-		const instance = await this.terminalService.createTerminal({
+		const cwd = URI.file(workspace.absolutePath);
+		const instance = await this.terminalService.createAndFocusTerminal({
 			location: TerminalLocation.Panel,
+			cwd,
 			config: {
 				name: this.getTerminalName(prompt, agent),
-				cwd: URI.file(workspace.absolutePath)
+				cwd
 			}
 		});
 
 		this.terminalService.setActiveInstance(instance);
-		await this.terminalGroupService.showPanel(false);
-		await this.terminalService.revealActiveTerminal(false);
-		await instance.focusWhenReady();
+		await this.terminalGroupService.showPanel(true);
+		await this.terminalService.revealTerminal(instance, false);
+		await this.commandService.executeCommand(TerminalCommandId.Focus);
+		await instance.focusWhenReady(true);
 
 		await instance.sendText(launchCommand, true);
 		if (followUp) {
