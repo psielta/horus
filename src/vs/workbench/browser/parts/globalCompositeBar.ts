@@ -132,10 +132,13 @@ export class GlobalCompositeBar extends Disposable {
 	}
 
 	getContextMenuActions(): IAction[] {
-		return [toAction({ id: 'toggleAccountsVisibility', label: localize('accounts', "Accounts"), checked: this.accountsVisibilityPreference, run: () => this.accountsVisibilityPreference = !this.accountsVisibilityPreference })];
+		return [];
 	}
 
 	private toggleAccountsActivity() {
+		if (!this.accountsVisibilityPreference) {
+			return;
+		}
 		if (this.globalActivityActionBar.length() === 2 && this.accountsVisibilityPreference) {
 			return;
 		}
@@ -741,10 +744,10 @@ function simpleActivityContextMenuActions(storageService: IStorageService, isAcc
 	];
 }
 
-export function isAccountsActionVisible(storageService: IStorageService): boolean {
-	return storageService.getBoolean(AccountsActivityActionViewItem.ACCOUNTS_VISIBILITY_PREFERENCE_KEY, StorageScope.PROFILE, true);
+export function isAccountsActionVisible(_storageService: IStorageService): boolean {
+	return false;
 }
 
-function setAccountsActionVisible(storageService: IStorageService, visible: boolean) {
-	storageService.store(AccountsActivityActionViewItem.ACCOUNTS_VISIBILITY_PREFERENCE_KEY, visible, StorageScope.PROFILE, StorageTarget.USER);
+function setAccountsActionVisible(storageService: IStorageService, _visible: boolean) {
+	storageService.store(AccountsActivityActionViewItem.ACCOUNTS_VISIBILITY_PREFERENCE_KEY, false, StorageScope.PROFILE, StorageTarget.USER);
 }

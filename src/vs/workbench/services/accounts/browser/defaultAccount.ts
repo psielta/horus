@@ -67,6 +67,7 @@ export const CONTEXT_DEFAULT_ACCOUNT_STATE = new RawContextKey<string>('defaultA
 const CACHED_POLICY_DATA_KEY = 'defaultAccount.cachedPolicyData';
 const ACCOUNT_DATA_POLL_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const MANAGED_SETTINGS_REQUEST_TIMEOUT_MS = 5000;
+const UNAVAILABLE_DEFAULT_ACCOUNT_AUTHENTICATION_PROVIDER: IDefaultAccountAuthenticationProvider = { id: '', name: '', enterprise: false };
 
 interface ITokenEntitlementsResponse {
 	token: string;
@@ -137,14 +138,17 @@ export class DefaultAccountService extends Disposable implements IDefaultAccount
 	private readonly _onDidChangeCopilotTokenInfo = this._register(new Emitter<ICopilotTokenInfo | null>());
 	readonly onDidChangeCopilotTokenInfo = this._onDidChangeCopilotTokenInfo.event;
 
-	private readonly defaultAccountConfig: IDefaultAccountConfig;
+	private readonly defaultAccountConfig: IDefaultAccountConfig | undefined;
 	private defaultAccountProvider: IDefaultAccountProvider | null = null;
 
 	constructor(
 		@IProductService productService: IProductService,
 	) {
 		super();
-		this.defaultAccountConfig = toDefaultAccountConfig(productService.defaultChatAgent);
+		this.defaultAccountConfig = productService.defaultChatAgent ? toDefaultAccountConfig(productService.defaultChatAgent) : undefined;
+		if (!this.defaultAccountConfig) {
+			this.initBarrier.open();
+		}
 	}
 
 	async getDefaultAccount(): Promise<IDefaultAccount | null> {
@@ -155,6 +159,9 @@ export class DefaultAccountService extends Disposable implements IDefaultAccount
 	getDefaultAccountAuthenticationProvider(): IDefaultAccountAuthenticationProvider {
 		if (this.defaultAccountProvider) {
 			return this.defaultAccountProvider.getDefaultAccountAuthenticationProvider();
+		}
+		if (!this.defaultAccountConfig) {
+			return UNAVAILABLE_DEFAULT_ACCOUNT_AUTHENTICATION_PROVIDER;
 		}
 		return {
 			...this.defaultAccountConfig.authenticationProvider.default,
@@ -191,6 +198,9 @@ export class DefaultAccountService extends Disposable implements IDefaultAccount
 
 	async signIn(options?: { additionalScopes?: readonly string[];[key: string]: unknown }): Promise<IDefaultAccount | null> {
 		await this.initBarrier.wait();
+		if (!this.defaultAccountConfig) {
+			return null;
+		}
 		return this.defaultAccountProvider?.signIn(options) ?? null;
 	}
 
@@ -1175,6 +1185,9 @@ class DefaultAccountProviderContribution extends Disposable implements IWorkbenc
 		@IDefaultAccountService defaultAccountService: IDefaultAccountService,
 	) {
 		super();
+		if (!productService.defaultChatAgent) {
+			return;
+		}
 		const defaultAccountProvider = this._register(instantiationService.createInstance(DefaultAccountProvider, toDefaultAccountConfig(productService.defaultChatAgent)));
 		defaultAccountService.setDefaultAccountProvider(defaultAccountProvider);
 	}
