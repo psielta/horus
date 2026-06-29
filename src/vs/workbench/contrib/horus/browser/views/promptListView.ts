@@ -16,7 +16,7 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { IViewletViewOptions } from '../../../../browser/parts/views/viewsViewlet.js';
 import { IViewDescriptorService } from '../../../../common/views.js';
 import { HorusCommandId } from '../../common/horus.js';
-import { resolveNativeHorusWorkspaces } from '../horusNativeWorkspaces.js';
+import { resolveCurrentHorusWorkspace } from '../horusNativeWorkspaces.js';
 import { horusWorkbenchState } from '../horusWorkbenchState.js';
 import { HorusViewPane } from './horusViewPane.js';
 
@@ -48,7 +48,6 @@ export class HorusPromptListView extends HorusViewPane {
 			}
 		}));
 		this._register(this.workspaceContextService.onDidChangeWorkspaceFolders(() => this.refresh().catch(error => this.renderMessage(String(error)))));
-		this._register(horusWorkbenchState.onDidChangeSelectedWorkspace(() => this.refresh().catch(error => this.renderMessage(String(error)))));
 		this._register(horusWorkbenchState.onDidChangeSelectedPrompt(() => this.refresh().catch(error => this.renderMessage(String(error)))));
 	}
 
@@ -65,23 +64,19 @@ export class HorusPromptListView extends HorusViewPane {
 		this.horusBody.appendChild(this.renderPromptListButton(localize('horusCreatePrompt', "Create Prompt"), () => this.commandService.executeCommand(HorusCommandId.CreatePrompt)));
 		this.horusBody.appendChild(this.renderPromptListButton(localize('horusOpenWorkflowBoard', "Open Workflow Board"), () => this.commandService.executeCommand(HorusCommandId.OpenWorkflowBoard)));
 
-		const workspaces = await resolveNativeHorusWorkspaces(this.workspaceContextService, this.horusStorageService);
+		const workspace = await resolveCurrentHorusWorkspace(this.workspaceContextService, this.horusStorageService);
 		if (isStaleRefresh()) {
 			return;
 		}
 
-		if (!workspaces.length) {
+		if (!workspace) {
 			this.appendMessage(localize('horusOpenWorkspaceForPrompts', "Open a folder to create and list Horus prompts."));
 			return;
 		}
 
-		let selectedWorkspaceId = horusWorkbenchState.getSelectedWorkspaceId();
-		if (!workspaces.some(workspace => workspace.id === selectedWorkspaceId)) {
-			selectedWorkspaceId = workspaces[0].id;
-			horusWorkbenchState.setSelectedWorkspaceId(selectedWorkspaceId);
-		}
+		horusWorkbenchState.setSelectedWorkspaceId(workspace.id);
 
-		const prompts = await this.horusStorageService.listPrompts({ workingDirectoryId: selectedWorkspaceId });
+		const prompts = await this.horusStorageService.listPrompts({ workingDirectoryId: workspace.id });
 		if (isStaleRefresh()) {
 			return;
 		}
@@ -109,7 +104,7 @@ export class HorusPromptListView extends HorusViewPane {
 			return;
 		}
 
-		if (!selectedPrompt || selectedPrompt.workingDirectoryId !== selectedWorkspaceId) {
+		if (!selectedPrompt || selectedPrompt.workingDirectoryId !== workspace.id) {
 			horusWorkbenchState.setSelectedPromptId(rootPrompts[0].id);
 			return;
 		}

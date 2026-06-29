@@ -16,19 +16,19 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
-import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { EditorExtensions, IEditorFactoryRegistry, IEditorSerializer } from '../../../common/editor.js';
 import { EditorInput } from '../../../common/editor/editorInput.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
-import { Extensions as ViewExtensions, IViewContainersRegistry, IViewsRegistry, ViewContainerLocation } from '../../../common/views.js';
+import { Extensions as ViewExtensions, IViewsRegistry } from '../../../common/views.js';
+import { VIEW_CONTAINER as EXPLORER_VIEW_CONTAINER } from '../../files/browser/explorerViewlet.js';
 import { HorusPromptEditor } from './editors/promptEditor.js';
 import { HorusPromptEditorInput } from './editors/promptEditorInput.js';
 import { HorusLinkedPlanEditor } from './editors/linkedPlanEditor.js';
 import { HorusLinkedPlanEditorInput } from './editors/linkedPlanEditorInput.js';
-import { HorusCommandId, HorusContext, HORUS_PROMPT_DETAIL_VIEW_ID, HORUS_PROMPTS_VIEW_ID, HORUS_VIEW_CONTAINER_ID, HORUS_WORKSPACES_VIEW_ID } from '../common/horus.js';
+import { HorusCommandId, HorusContext, HORUS_PROMPT_DETAIL_VIEW_ID, HORUS_PROMPTS_VIEW_ID } from '../common/horus.js';
 import { getHorusChildPromptTemplates, HorusChildPromptTemplate, HorusPromptTemplateInputDefinition, renderHorusChildPromptTemplate } from '../../../../platform/horus/common/horusPromptTemplates.js';
-import { resolveNativeHorusWorkspaces } from './horusNativeWorkspaces.js';
+import { resolveCurrentHorusWorkspace } from './horusNativeWorkspaces.js';
 import { createHorusLinkedDocumentVersionResource, createHorusPromptVersionResource, HorusVersionContentProvider } from './horusVersionContentProvider.js';
 import { horusWorkbenchState } from './horusWorkbenchState.js';
 import { HorusLinkedPlanMonitor } from './linkedPlanMonitor.js';
@@ -36,7 +36,6 @@ import { defaultTerminalLaunchForPrompt, HorusTerminalAgentLaunch, HorusTerminal
 import { openHorusWorkflowBoard } from './workflow/horusWorkflowBoard.js';
 import { HorusPromptDetailView } from './views/promptDetailView.js';
 import { HorusPromptListView } from './views/promptListView.js';
-import { HorusWorkspaceListView } from './views/workspaceListView.js';
 
 const horusViewIcon = registerIcon('horus-view-icon', Codicon.eye, localize('horusViewIcon', 'View icon of the Horus view.'));
 const horusCategory = localize2('horusCategory', "Horus");
@@ -131,48 +130,32 @@ Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane
 	]
 );
 
-const viewContainer = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewContainersRegistry).registerViewContainer({
-	id: HORUS_VIEW_CONTAINER_ID,
-	title: localize2('horus', "Horus"),
-	icon: horusViewIcon,
-	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [HORUS_VIEW_CONTAINER_ID, { mergeViewWithContainerWhenSingleView: false }]),
-	hideIfEmpty: false,
-	order: 2
-}, ViewContainerLocation.Sidebar, { doNotRegisterOpenCommand: false });
-
 Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([
-	{
-		id: HORUS_WORKSPACES_VIEW_ID,
-		name: localize2('horusWorkspaces', "Workspaces"),
-		containerIcon: horusViewIcon,
-		ctorDescriptor: new SyncDescriptor(HorusWorkspaceListView),
-		canToggleVisibility: false,
-		canMoveView: true
-	},
 	{
 		id: HORUS_PROMPTS_VIEW_ID,
 		name: localize2('horusPrompts', "Prompts"),
 		containerIcon: horusViewIcon,
 		ctorDescriptor: new SyncDescriptor(HorusPromptListView),
+		order: 2,
 		canToggleVisibility: false,
-		canMoveView: true
+		canMoveView: false
 	},
 	{
 		id: HORUS_PROMPT_DETAIL_VIEW_ID,
 		name: localize2('horusPromptDetails', "Prompt Details"),
 		containerIcon: horusViewIcon,
 		ctorDescriptor: new SyncDescriptor(HorusPromptDetailView),
+		order: 3,
 		canToggleVisibility: true,
-		canMoveView: true
+		canMoveView: false
 	}
-], viewContainer);
+], EXPLORER_VIEW_CONTAINER);
 
 class HorusContextKeysContribution extends Disposable implements IWorkbenchContribution {
 
 	static readonly ID = 'workbench.contrib.horus.contextKeys';
 
 	private readonly hasNativeWorkspaceContext: IContextKey<boolean>;
-	private readonly workspaceSelectedContext: IContextKey<boolean>;
 	private readonly promptSelectedContext: IContextKey<boolean>;
 
 	constructor(
@@ -182,18 +165,15 @@ class HorusContextKeysContribution extends Disposable implements IWorkbenchContr
 		super();
 
 		this.hasNativeWorkspaceContext = HorusContext.HasNativeWorkspace.bindTo(this.contextKeyService);
-		this.workspaceSelectedContext = HorusContext.WorkspaceSelected.bindTo(this.contextKeyService);
 		this.promptSelectedContext = HorusContext.PromptSelected.bindTo(this.contextKeyService);
 
 		this.update();
 		this._register(this.workspaceContextService.onDidChangeWorkspaceFolders(() => this.update()));
-		this._register(horusWorkbenchState.onDidChangeSelectedWorkspace(() => this.update()));
 		this._register(horusWorkbenchState.onDidChangeSelectedPrompt(() => this.update()));
 	}
 
 	private update(): void {
 		this.hasNativeWorkspaceContext.set(this.workspaceContextService.getWorkspace().folders.length > 0);
-		this.workspaceSelectedContext.set(!!horusWorkbenchState.getSelectedWorkspaceId());
 		this.promptSelectedContext.set(!!horusWorkbenchState.getSelectedPromptId());
 	}
 }
@@ -205,42 +185,18 @@ registerWorkbenchContribution2(HorusVersionContentProvider.ID, HorusVersionConte
 async function resolveWorkspaceForCommand(
 	workspaceContextService: IWorkspaceContextService,
 	horusStorageService: IHorusStorageService,
-	quickInputService: IQuickInputService,
 	commandService: ICommandService,
 	notificationService: INotificationService
 ): Promise<HorusWorkspace | undefined> {
-	const workspaces = await resolveNativeHorusWorkspaces(workspaceContextService, horusStorageService);
-	if (!workspaces.length) {
+	const workspace = await resolveCurrentHorusWorkspace(workspaceContextService, horusStorageService);
+	if (!workspace) {
 		notificationService.info(localize('horusOpenFolderFirst', "Open a folder first. Horus uses the VS Code workspace as its workspace."));
 		await commandService.executeCommand(openFolderCommandId);
 		return undefined;
 	}
 
-	const selectedWorkspaceId = horusWorkbenchState.getSelectedWorkspaceId();
-	const selectedWorkspace = selectedWorkspaceId ? workspaces.find(workspace => workspace.id === selectedWorkspaceId) : undefined;
-	if (selectedWorkspace) {
-		return selectedWorkspace;
-	}
-
-	if (workspaces.length === 1) {
-		horusWorkbenchState.setSelectedWorkspaceId(workspaces[0].id);
-		return workspaces[0];
-	}
-
-	const item = await quickInputService.pick(workspaces.map(workspace => ({
-		label: workspace.name,
-		description: workspace.absolutePath,
-		workspace
-	})), {
-		placeHolder: localize('horusPickNativeWorkspace', "Select an open VS Code workspace folder")
-	});
-
-	if (!item) {
-		return undefined;
-	}
-
-	horusWorkbenchState.setSelectedWorkspaceId(item.workspace.id);
-	return item.workspace;
+	horusWorkbenchState.setSelectedWorkspaceId(workspace.id);
+	return workspace;
 }
 
 async function resolveSelectedPromptForCommand(
@@ -409,34 +365,6 @@ function getLinkedDocumentVersionSourceLabel(source: HorusLinkedDocumentVersionS
 registerAction2(class extends Action2 {
 	constructor() {
 		super({
-			id: HorusCommandId.CreateWorkspace,
-			title: localize2('horusUseCurrentWorkspaceCommand', "Horus: Use Current VS Code Workspace"),
-			category: horusCategory,
-			f1: true
-		});
-	}
-
-	async run(accessor: ServicesAccessor): Promise<void> {
-		const quickInputService = accessor.get(IQuickInputService);
-		const notificationService = accessor.get(INotificationService);
-		const workspaceContextService = accessor.get(IWorkspaceContextService);
-		const horusStorageService = accessor.get(IHorusStorageService);
-		const commandService = accessor.get(ICommandService);
-
-		try {
-			const workspace = await resolveWorkspaceForCommand(workspaceContextService, horusStorageService, quickInputService, commandService, notificationService);
-			if (workspace) {
-				notificationService.info(localize('horusWorkspaceReady', "Horus is using the open workspace: {0}", workspace.name));
-			}
-		} catch (error) {
-			notificationService.error(error);
-		}
-	}
-});
-
-registerAction2(class extends Action2 {
-	constructor() {
-		super({
 			id: HorusCommandId.CreatePrompt,
 			title: localize2('horusCreatePromptCommand', "Horus: Create Prompt"),
 			category: horusCategory,
@@ -451,7 +379,7 @@ registerAction2(class extends Action2 {
 		const commandService = accessor.get(ICommandService);
 		const workspaceContextService = accessor.get(IWorkspaceContextService);
 
-		const workspace = await resolveWorkspaceForCommand(workspaceContextService, horusStorageService, quickInputService, commandService, notificationService);
+		const workspace = await resolveWorkspaceForCommand(workspaceContextService, horusStorageService, commandService, notificationService);
 		if (!workspace) {
 			return;
 		}
@@ -935,7 +863,7 @@ registerAction2(class extends Action2 {
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const horusStorageService = accessor.get(IHorusStorageService);
 		const workspaceContextService = accessor.get(IWorkspaceContextService);
-		await resolveNativeHorusWorkspaces(workspaceContextService, horusStorageService);
+		await resolveCurrentHorusWorkspace(workspaceContextService, horusStorageService);
 		await horusStorageService.getHealth();
 	}
 });

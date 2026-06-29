@@ -10,6 +10,10 @@ export function getNativeWorkspaceFolders(workspaceContextService: IWorkspaceCon
 	}));
 }
 
+export function getCurrentNativeWorkspaceFolder(workspaceContextService: IWorkspaceContextService): HorusNativeWorkspaceFolder | undefined {
+	return getNativeWorkspaceFolders(workspaceContextService)[0];
+}
+
 export async function resolveNativeHorusWorkspaces(
 	workspaceContextService: IWorkspaceContextService,
 	horusStorageService: IHorusStorageService
@@ -20,4 +24,16 @@ export async function resolveNativeHorusWorkspaces(
 	}
 
 	return horusStorageService.resolveNativeWorkspaces(folders);
+}
+
+export async function resolveCurrentHorusWorkspace(
+	workspaceContextService: IWorkspaceContextService,
+	horusStorageService: IHorusStorageService
+): Promise<HorusWorkspace | undefined> {
+	const folder = getCurrentNativeWorkspaceFolder(workspaceContextService);
+	if (!folder) {
+		return undefined;
+	}
+
+	return (await horusStorageService.resolveNativeWorkspaces([folder]))[0];
 }

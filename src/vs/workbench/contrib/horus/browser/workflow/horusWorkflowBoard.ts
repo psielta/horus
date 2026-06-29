@@ -6,12 +6,14 @@ import { IHorusStorageService } from '../../../../../platform/horus/common/horus
 import { HorusPrompt, HorusPromptStatus, HorusTaskSummary, HorusWorkflowActor, HorusWorkflowBoardQuery, HorusWorkflowDto, HorusWorkflowEventType, HorusWorkflowPhaseDto, HorusWorkflowPhaseInput, HorusWorkflowPhaseRole, HorusWorkflowStatus, HorusWorkflowTemplateDto, HorusWorkspace } from '../../../../../platform/horus/common/horusTypes.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { ACTIVE_GROUP } from '../../../../services/editor/common/editorService.js';
 import { IWebviewWorkbenchService } from '../../../webviewPanel/browser/webviewWorkbenchService.js';
 import { WebviewInput } from '../../../webviewPanel/browser/webviewEditorInput.js';
 import { HorusCommandId } from '../../common/horus.js';
 import { defaultTerminalLaunchForPrompt, HorusTerminalAgentLaunch, HorusTerminalLauncher } from '../horusTerminalLauncher.js';
+import { resolveCurrentHorusWorkspace } from '../horusNativeWorkspaces.js';
 
 const workflowBoardViewType = 'horus.workflowBoard';
 
@@ -29,7 +31,7 @@ interface BoardColumn {
 }
 
 type WebviewMessage =
-	| { readonly command: 'filter'; readonly q?: string; readonly workingDirectoryId?: string; readonly promptStatus?: string; readonly workflowStatus?: string }
+	| { readonly command: 'filter'; readonly q?: string; readonly promptStatus?: string; readonly workflowStatus?: string }
 	| { readonly command: 'clearFilters' }
 	| { readonly command: 'setViewMode'; readonly viewMode: BoardViewMode }
 	| { readonly command: 'refresh' }
@@ -68,7 +70,7 @@ class HorusWorkflowBoardPanel extends Disposable {
 	private input: WebviewInput | undefined;
 	private board: readonly HorusTaskSummary[] = [];
 	private template: HorusWorkflowTemplateDto | undefined;
-	private workspaces: readonly HorusWorkspace[] = [];
+	private currentWorkspace: HorusWorkspace | undefined;
 	private columns: readonly BoardColumn[] = [];
 	private selectedPromptId: string | undefined;
 	private filters: HorusWorkflowBoardQuery = {};
@@ -81,7 +83,8 @@ class HorusWorkflowBoardPanel extends Disposable {
 		@IHorusStorageService private readonly horusStorageService: IHorusStorageService,
 		@ICommandService private readonly commandService: ICommandService,
 		@INotificationService private readonly notificationService: INotificationService,
-		@IInstantiationService private readonly instantiationService: IInstantiationService
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService
 	) {
 		super();
 		this._register(this.horusStorageService.onDidChangeData(event => {
@@ -89,6 +92,7 @@ class HorusWorkflowBoardPanel extends Disposable {
 				this.refresh().catch(error => this.notificationService.error(error));
 			}
 		}));
+		this._register(this.workspaceContextService.onDidChangeWorkspaceFolders(() => this.refresh().catch(error => this.notificationService.error(error))));
 	}
 
 	async open(): Promise<void> {
@@ -127,10 +131,10 @@ class HorusWorkflowBoardPanel extends Disposable {
 		}
 
 		const sequence = ++this.renderSequence;
-		const [board, template, workspaces] = await Promise.all([
-			this.horusStorageService.listWorkflowBoard(this.filters),
-			this.horusStorageService.getWorkflowTemplate(),
-			this.horusStorageService.listWorkspaces()
+		const currentWorkspace = await resolveCurrentHorusWorkspace(this.workspaceContextService, this.horusStorageService);
+		const [board, template] = await Promise.all([
+			currentWorkspace ? this.horusStorageService.listWorkflowBoard({ ...this.filters, workingDirectoryId: currentWorkspace.id }) : Promise.resolve([]),
+			this.horusStorageService.getWorkflowTemplate()
 		]);
 
 		if (sequence !== this.renderSequence || !this.input) {
@@ -139,7 +143,7 @@ class HorusWorkflowBoardPanel extends Disposable {
 
 		this.board = board;
 		this.template = template;
-		this.workspaces = workspaces;
+		this.currentWorkspace = currentWorkspace;
 		this.columns = this.buildColumns(board, template.phases);
 		if (this.selectedPromptId && !board.some(task => task.promptId === this.selectedPromptId)) {
 			this.selectedPromptId = undefined;
@@ -251,7 +255,6 @@ class HorusWorkflowBoardPanel extends Disposable {
 		const workflowStatus = this.parseOptionalNumber(message.workflowStatus);
 		return {
 			q: message.q?.trim() || undefined,
-			workingDirectoryId: message.workingDirectoryId || undefined,
 			promptStatus: promptStatus as HorusPromptStatus | undefined,
 			workflowStatus: workflowStatus as HorusWorkflowStatus | undefined
 		};
@@ -444,7 +447,8 @@ class HorusWorkflowBoardPanel extends Disposable {
 
 	private renderHtml(selectedWorkflow: HorusWorkflowDto | undefined, selectedPrompt: HorusPrompt | undefined): string {
 		const nonce = generateUuid();
-		const activeFilters = [this.filters.q, this.filters.workingDirectoryId, this.filters.promptStatus, this.filters.workflowStatus].filter(value => value !== undefined && value !== '').length;
+		const activeFilters = [this.filters.q, this.filters.promptStatus, this.filters.workflowStatus].filter(value => value !== undefined && value !== '').length;
+		const workspaceLabel = this.currentWorkspace?.name ?? localize('horusNoWorkspaceOpen', "no workspace open");
 		return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -458,7 +462,7 @@ class HorusWorkflowBoardPanel extends Disposable {
 	<header class="toolbar">
 		<div>
 			<h1>${escapeHtml(localize('horusWorkflowBoardTitle', "Horus Workflow"))}</h1>
-			<p>${escapeHtml(localize('horusWorkflowBoardSubtitle', "{0} root prompts tracked", this.board.length))}</p>
+			<p>${escapeHtml(localize('horusWorkflowBoardSubtitle', "{0} root prompts tracked in {1}", this.board.length, workspaceLabel))}</p>
 		</div>
 		<div class="toolbar-actions">
 			<button data-command="setViewMode" data-view-mode="${this.viewMode === 'kanban' ? 'vertical' : 'kanban'}">${escapeHtml(this.viewMode === 'kanban' ? localize('horusVerticalView', "Vertical view") : localize('horusKanbanView', "Kanban view"))}</button>
@@ -467,10 +471,6 @@ class HorusWorkflowBoardPanel extends Disposable {
 	</header>
 	<form class="filters" data-command="filter">
 		<input name="q" value="${escapeAttribute(this.filters.q ?? '')}" placeholder="${escapeAttribute(localize('horusSearchWorkflow', "Search title, task or content"))}">
-		<select name="workingDirectoryId">
-			<option value="">${escapeHtml(localize('horusAllWorkspaces', "All workspaces"))}</option>
-			${this.workspaces.map(workspace => `<option value="${escapeAttribute(workspace.id)}" ${workspace.id === this.filters.workingDirectoryId ? 'selected' : ''}>${escapeHtml(workspace.name)}</option>`).join('')}
-		</select>
 		<select name="promptStatus">
 			<option value="">${escapeHtml(localize('horusNonArchivedPrompts', "Not archived"))}</option>
 			${this.renderPromptStatusOption(HorusPromptStatus.Draft, 'Draft')}
