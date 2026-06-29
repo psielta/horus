@@ -9,7 +9,7 @@ import { localize } from '../../../../nls.js';
 import { Delayer } from '../../../../base/common/async.js';
 import * as DOM from '../../../../base/browser/dom.js';
 import { isIOS, OS } from '../../../../base/common/platform.js';
-import { Disposable, DisposableStore, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
 import { ToggleActionViewItem } from '../../../../base/browser/ui/toggle/toggle.js';
 import { HighlightedLabel } from '../../../../base/browser/ui/highlightedlabel/highlightedLabel.js';
 import { KeybindingLabel } from '../../../../base/browser/ui/keybindingLabel/keybindingLabel.js';
@@ -30,7 +30,6 @@ import { IListContextMenuEvent } from '../../../../base/browser/ui/list/list.js'
 import { IThemeService, registerThemingParticipant, IColorTheme, ICssStyleCollector } from '../../../../platform/theme/common/themeService.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { IContextKeyService, IContextKey, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
-import { KeyCode } from '../../../../base/common/keyCodes.js';
 import { badgeBackground, contrastBorder, badgeForeground, listActiveSelectionForeground, listInactiveSelectionForeground, listHoverForeground, listFocusForeground, editorBackground, foreground, listActiveSelectionBackground, listInactiveSelectionBackground, listFocusBackground, listHoverBackground, registerColor, tableOddRowsBackgroundColor, asCssVariable } from '../../../../platform/theme/common/colorRegistry.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { EditorExtensionsRegistry } from '../../../../editor/browser/editorExtensions.js';
@@ -49,8 +48,6 @@ import { KeybindingsEditorInput } from '../../../services/preferences/browser/ke
 import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
 import { ToolBar } from '../../../../base/browser/ui/toolbar/toolbar.js';
 import { defaultKeybindingLabelStyles, defaultToggleStyles, getInputBoxStyle } from '../../../../platform/theme/browser/defaultStyles.js';
-import { IExtensionsWorkbenchService } from '../../extensions/common/extensions.js';
-import { StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 import { isString } from '../../../../base/common/types.js';
 import { SuggestEnabledInput } from '../../codeEditor/browser/suggestEnabledInput/suggestEnabledInput.js';
 import { CompletionItemKind } from '../../../../editor/common/languages.js';
@@ -1045,20 +1042,6 @@ interface ISourceColumnTemplateData {
 	disposables: DisposableStore;
 }
 
-function onClick(element: HTMLElement, callback: () => void): IDisposable {
-	const disposables = new DisposableStore();
-	disposables.add(DOM.addDisposableListener(element, DOM.EventType.CLICK, DOM.finalHandler(callback)));
-	disposables.add(DOM.addDisposableListener(element, DOM.EventType.KEY_UP, e => {
-		const keyboardEvent = new StandardKeyboardEvent(e);
-		if (keyboardEvent.equals(KeyCode.Space) || keyboardEvent.equals(KeyCode.Enter)) {
-			e.preventDefault();
-			e.stopPropagation();
-			callback();
-		}
-	}));
-	return disposables;
-}
-
 class SourceColumnRenderer implements ITableRenderer<IKeybindingItemEntry, ISourceColumnTemplateData> {
 
 	static readonly TEMPLATE_ID = 'source';
@@ -1066,7 +1049,6 @@ class SourceColumnRenderer implements ITableRenderer<IKeybindingItemEntry, ISour
 	readonly templateId: string = SourceColumnRenderer.TEMPLATE_ID;
 
 	constructor(
-		@IExtensionsWorkbenchService private readonly extensionsWorkbenchService: IExtensionsWorkbenchService,
 		@IHoverService private readonly hoverService: IHoverService,
 	) { }
 
@@ -1094,9 +1076,6 @@ class SourceColumnRenderer implements ITableRenderer<IKeybindingItemEntry, ISour
 			const extensionLabel = extension.displayName ?? extension.identifier.value;
 			templateData.sourceColumnHover.update(localize('extension label', "Extension ({0})", extensionLabel));
 			templateData.extensionLabel.textContent = extensionLabel;
-			templateData.disposables.add(onClick(templateData.extensionLabel, () => {
-				this.extensionsWorkbenchService.open(extension.identifier.value);
-			}));
 			if (keybindingItemEntry.extensionIdMatches) {
 				templateData.extensionId.element.classList.remove('hide');
 				templateData.extensionId.set(extension.identifier.value, keybindingItemEntry.extensionIdMatches);

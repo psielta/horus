@@ -12,7 +12,6 @@ import { IExtensionManagementService, IExtensionGalleryService, InstallOperation
 import { INotificationService, NeverShowAgainScope, NotificationPriority } from '../../../../platform/notification/common/notification.js';
 import Severity from '../../../../base/common/severity.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
-import { IExtensionsWorkbenchService } from '../../extensions/common/extensions.js';
 import { minimumTranslatedStrings } from './minimalTranslations.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
@@ -30,7 +29,6 @@ class NativeLocalizationWorkbenchContribution extends BaseLocalizationWorkbenchC
 		@IStorageService private readonly storageService: IStorageService,
 		@IExtensionManagementService private readonly extensionManagementService: IExtensionManagementService,
 		@IExtensionGalleryService private readonly galleryService: IExtensionGalleryService,
-		@IExtensionsWorkbenchService private readonly extensionsWorkbenchService: IExtensionsWorkbenchService,
 		@ITelemetryService private readonly telemetryService: ITelemetryService,
 	) {
 		super();
@@ -163,14 +161,6 @@ class NativeLocalizationWorkbenchContribution extends BaseLocalizationWorkbenchC
 			this.telemetryService.publicLog('languagePackSuggestion:popup', { userReaction, language: locale });
 		};
 
-		const searchAction = {
-			label: translations['searchMarketplace'],
-			run: async () => {
-				logUserReaction('search');
-				await this.extensionsWorkbenchService.openSearch(`tag:lp-${locale}`);
-			}
-		};
-
 		const installAndRestartAction = {
 			label: translations['installAndRestart'],
 			run: async () => {
@@ -190,21 +180,23 @@ class NativeLocalizationWorkbenchContribution extends BaseLocalizationWorkbenchC
 		this.notificationService.prompt(
 			Severity.Info,
 			promptMessage,
-			[extensionToInstall ? installAndRestartAction : searchAction,
-			{
-				label: localize('neverAgain', "Don't Show Again"),
-				isSecondary: true,
-				run: () => {
-					languagePackSuggestionIgnoreList.push(fullLocale);
-					this.storageService.store(
-						NativeLocalizationWorkbenchContribution.LANGUAGEPACK_SUGGESTION_IGNORE_STORAGE_KEY,
-						JSON.stringify(languagePackSuggestionIgnoreList),
-						StorageScope.APPLICATION,
-						StorageTarget.USER
-					);
-					logUserReaction('neverShowAgain');
+			[
+				installAndRestartAction,
+				{
+					label: localize('neverAgain', "Don't Show Again"),
+					isSecondary: true,
+					run: () => {
+						languagePackSuggestionIgnoreList.push(fullLocale);
+						this.storageService.store(
+							NativeLocalizationWorkbenchContribution.LANGUAGEPACK_SUGGESTION_IGNORE_STORAGE_KEY,
+							JSON.stringify(languagePackSuggestionIgnoreList),
+							StorageScope.APPLICATION,
+							StorageTarget.USER
+						);
+						logUserReaction('neverShowAgain');
+					}
 				}
-			}],
+			],
 			{
 				priority: NotificationPriority.OPTIONAL,
 				onCancel: () => {

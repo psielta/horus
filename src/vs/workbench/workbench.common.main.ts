@@ -422,7 +422,6 @@ import './contrib/list/browser/list.contribution.js';
 import './contrib/accessibilitySignals/browser/accessibilitySignal.contribution.js';
 
 // Bracket Pair Colorizer 2 Telemetry
-import './contrib/bracketPairColorizer2Telemetry/browser/bracketPairColorizer2Telemetry.contribution.js';
 
 // Accessibility
 import './contrib/accessibility/browser/accessibility.contribution.js';

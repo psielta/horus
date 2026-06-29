@@ -63,7 +63,6 @@ import { IWorkbenchEnvironmentService } from '../../../services/environment/comm
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { ISetting, ISettingsGroup, SETTINGS_AUTHORITY, SettingValueType } from '../../../services/preferences/common/preferences.js';
 import { getInvalidTypeError } from '../../../services/preferences/common/preferencesValidation.js';
-import { IExtensionsWorkbenchService } from '../../extensions/common/extensions.js';
 import { LANGUAGE_SETTING_TAG, SETTINGS_EDITOR_COMMAND_SHOW_CONTEXT_MENU, compareTwoNullableNumbers } from '../common/preferences.js';
 import { settingsNumberInputBackground, settingsNumberInputBorder, settingsNumberInputForeground, settingsSelectBackground, settingsSelectBorder, settingsSelectForeground, settingsSelectListBorder, settingsTextInputBackground, settingsTextInputBorder, settingsTextInputForeground } from '../common/settingsEditorColorRegistry.js';
 import { settingsMoreActionIcon } from './preferencesIcons.js';
@@ -904,7 +903,6 @@ export abstract class AbstractSettingRenderer extends Disposable implements ITre
 		@IKeybindingService protected readonly _keybindingService: IKeybindingService,
 		@IConfigurationService protected readonly _configService: IConfigurationService,
 		@IExtensionService protected readonly _extensionsService: IExtensionService,
-		@IExtensionsWorkbenchService protected readonly _extensionsWorkbenchService: IExtensionsWorkbenchService,
 		@IProductService protected readonly _productService: IProductService,
 		@ITelemetryService protected readonly _telemetryService: ITelemetryService,
 		@IHoverService protected readonly _hoverService: IHoverService,

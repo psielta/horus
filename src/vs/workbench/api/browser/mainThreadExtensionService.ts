@@ -3,31 +3,21 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { toAction } from '../../../base/common/actions.js';
 import { VSBuffer } from '../../../base/common/buffer.js';
-import { CancellationToken } from '../../../base/common/cancellation.js';
 import { SerializedError, transformErrorFromSerialization } from '../../../base/common/errors.js';
 import { FileAccess } from '../../../base/common/network.js';
-import Severity from '../../../base/common/severity.js';
 import { URI, UriComponents } from '../../../base/common/uri.js';
-import { localize } from '../../../nls.js';
-import { ICommandService } from '../../../platform/commands/common/commands.js';
-import { ILocalExtension } from '../../../platform/extensionManagement/common/extensionManagement.js';
-import { areSameExtensions } from '../../../platform/extensionManagement/common/extensionManagementUtil.js';
-import { ExtensionIdentifier, IExtensionDescription } from '../../../platform/extensions/common/extensions.js';
+import { ExtensionIdentifier } from '../../../platform/extensions/common/extensions.js';
 import { INotificationService } from '../../../platform/notification/common/notification.js';
 import { IRemoteConnectionData, ManagedRemoteConnection, RemoteConnection, RemoteConnectionType, ResolvedAuthority, WebSocketRemoteConnection } from '../../../platform/remote/common/remoteAuthorityResolver.js';
 import { ExtHostContext, ExtHostExtensionServiceShape, MainContext, MainThreadExtensionServiceShape } from '../common/extHost.protocol.js';
-import { IExtension, IExtensionsWorkbenchService } from '../../contrib/extensions/common/extensions.js';
 import { IWorkbenchEnvironmentService } from '../../services/environment/common/environmentService.js';
-import { EnablementState, IWorkbenchExtensionEnablementService } from '../../services/extensionManagement/common/extensionManagement.js';
 import { ExtensionHostKind } from '../../services/extensions/common/extensionHostKind.js';
 import { IExtensionDescriptionDelta } from '../../services/extensions/common/extensionHostProtocol.js';
 import { IExtensionHostProxy, IResolveAuthorityResult } from '../../services/extensions/common/extensionHostProxy.js';
 import { ActivationKind, ExtensionActivationReason, IExtensionService, IInternalExtensionService, MissingExtensionDependency } from '../../services/extensions/common/extensions.js';
 import { extHostNamedCustomer, IExtHostContext, IInternalExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
 import { Dto } from '../../services/extensions/common/proxyIdentifier.js';
-import { IHostService } from '../../services/host/browser/host.js';
 import { ITimerService } from '../../services/timer/browser/timerService.js';
 
 @extHostNamedCustomer(MainContext.MainThreadExtensionService)
@@ -40,11 +30,7 @@ export class MainThreadExtensionService implements MainThreadExtensionServiceSha
 		extHostContext: IExtHostContext,
 		@IExtensionService private readonly _extensionService: IExtensionService,
 		@INotificationService private readonly _notificationService: INotificationService,
-		@IExtensionsWorkbenchService private readonly _extensionsWorkbenchService: IExtensionsWorkbenchService,
-		@IHostService private readonly _hostService: IHostService,
-		@IWorkbenchExtensionEnablementService private readonly _extensionEnablementService: IWorkbenchExtensionEnablementService,
 		@ITimerService private readonly _timerService: ITimerService,
-		@ICommandService private readonly _commandService: ICommandService,
 		@IWorkbenchEnvironmentService protected readonly _environmentService: IWorkbenchEnvironmentService,
 	) {
 		this._extensionHostKind = extHostContext.extensionHostKind;
@@ -85,18 +71,7 @@ export class MainThreadExtensionService implements MainThreadExtensionServiceSha
 		this._internalExtensionService._onDidActivateExtensionError(extensionId, error);
 
 		if (missingExtensionDependency) {
-			const extension = await this._extensionService.getExtension(extensionId.value);
-			if (extension) {
-				const local = await this._extensionsWorkbenchService.queryLocal();
-				const installedDependency = local.find(i => areSameExtensions(i.identifier, { id: missingExtensionDependency.dependency }));
-				if (installedDependency?.local) {
-					await this._handleMissingInstalledDependency(extension, installedDependency.local);
-					return;
-				} else {
-					await this._handleMissingNotInstalledDependency(extension, missingExtensionDependency.dependency);
-					return;
-				}
-			}
+			console.error(`Cannot activate extension '${extensionId.value}' because dependency '${missingExtensionDependency.dependency}' is missing.`);
 		}
 
 		const isDev = !this._environmentService.isBuilt || this._environmentService.isExtensionDevelopment;
@@ -106,77 +81,6 @@ export class MainThreadExtensionService implements MainThreadExtensionServiceSha
 		}
 
 		console.error(error.message);
-	}
-
-	private async _handleMissingInstalledDependency(extension: IExtensionDescription, missingInstalledDependency: ILocalExtension): Promise<void> {
-		const extName = extension.displayName || extension.name;
-		if (this._extensionEnablementService.isEnabled(missingInstalledDependency)) {
-			this._notificationService.notify({
-				severity: Severity.Error,
-				message: localize('reload window', "Cannot activate the '{0}' extension because it depends on the '{1}' extension, which is not loaded. Would you like to reload the window to load the extension?", extName, missingInstalledDependency.manifest.displayName || missingInstalledDependency.manifest.name),
-				actions: {
-					primary: [toAction({ id: 'reload', label: localize('reload', "Reload Window"), run: () => this._hostService.reload() })]
-				}
-			});
-		} else {
-			const enablementState = this._extensionEnablementService.getEnablementState(missingInstalledDependency);
-			if (enablementState === EnablementState.DisabledByVirtualWorkspace) {
-				this._notificationService.notify({
-					severity: Severity.Error,
-					message: localize('notSupportedInWorkspace', "Cannot activate the '{0}' extension because it depends on the '{1}' extension which is not supported in the current workspace", extName, missingInstalledDependency.manifest.displayName || missingInstalledDependency.manifest.name),
-				});
-			} else if (enablementState === EnablementState.DisabledByTrustRequirement) {
-				this._notificationService.notify({
-					severity: Severity.Error,
-					message: localize('restrictedMode', "Cannot activate the '{0}' extension because it depends on the '{1}' extension which is not supported in Restricted Mode", extName, missingInstalledDependency.manifest.displayName || missingInstalledDependency.manifest.name),
-					actions: {
-						primary: [toAction({ id: 'manageWorkspaceTrust', label: localize('manageWorkspaceTrust', "Manage Workspace Trust"), run: () => this._commandService.executeCommand('workbench.trust.manage') })]
-					}
-				});
-			} else if (this._extensionEnablementService.canChangeEnablement(missingInstalledDependency)) {
-				this._notificationService.notify({
-					severity: Severity.Error,
-					message: localize('disabledDep', "Cannot activate the '{0}' extension because it depends on the '{1}' extension which is disabled. Would you like to enable the extension and reload the window?", extName, missingInstalledDependency.manifest.displayName || missingInstalledDependency.manifest.name),
-					actions: {
-						primary: [toAction({
-							id: 'enable', label: localize('enable dep', "Enable and Reload"), enabled: true,
-							run: () => this._extensionEnablementService.setEnablement([missingInstalledDependency], enablementState === EnablementState.DisabledGlobally ? EnablementState.EnabledGlobally : EnablementState.EnabledWorkspace)
-								.then(() => this._hostService.reload(), e => this._notificationService.error(e))
-						})]
-					}
-				});
-			} else {
-				this._notificationService.notify({
-					severity: Severity.Error,
-					message: localize('disabledDepNoAction', "Cannot activate the '{0}' extension because it depends on the '{1}' extension which is disabled.", extName, missingInstalledDependency.manifest.displayName || missingInstalledDependency.manifest.name),
-				});
-			}
-		}
-	}
-
-	private async _handleMissingNotInstalledDependency(extension: IExtensionDescription, missingDependency: string): Promise<void> {
-		const extName = extension.displayName || extension.name;
-		let dependencyExtension: IExtension | null = null;
-		try {
-			dependencyExtension = (await this._extensionsWorkbenchService.getExtensions([{ id: missingDependency }], CancellationToken.None))[0];
-		} catch (err) {
-		}
-		if (dependencyExtension) {
-			this._notificationService.notify({
-				severity: Severity.Error,
-				message: localize('uninstalledDep', "Cannot activate the '{0}' extension because it depends on the '{1}' extension from '{2}', which is not installed. Would you like to install the extension and reload the window?", extName, dependencyExtension.displayName, dependencyExtension.publisherDisplayName),
-				actions: {
-					primary: [toAction({
-						id: 'install',
-						label: localize('install missing dep', "Install and Reload"),
-						run: () => this._extensionsWorkbenchService.install(dependencyExtension)
-							.then(() => this._hostService.reload(), e => this._notificationService.error(e))
-					})]
-				}
-			});
-		} else {
-			this._notificationService.error(localize('unknownDep', "Cannot activate the '{0}' extension because it depends on an unknown '{1}' extension.", extName, missingDependency));
-		}
 	}
 
 	async $setPerformanceMarks(marks: PerformanceMark[]): Promise<void> {

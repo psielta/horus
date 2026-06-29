@@ -30,7 +30,7 @@ import { ILabelService } from '../../../../platform/label/common/label.js';
 import { WorkbenchTable } from '../../../../platform/list/browser/listService.js';
 import { Link } from '../../../../platform/opener/browser/link.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
-import { isVirtualResource, isVirtualWorkspace } from '../../../../platform/workspace/common/virtualWorkspace.js';
+import { isVirtualResource } from '../../../../platform/workspace/common/virtualWorkspace.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { asCssVariable, buttonBackground, buttonSecondaryBackground, editorErrorForeground } from '../../../../platform/theme/common/colorRegistry.js';
@@ -41,14 +41,10 @@ import { IWorkspaceTrustManagementService } from '../../../../platform/workspace
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../common/editor.js';
 import { debugIconStartForeground } from '../../debug/browser/debugColors.js';
-import { IExtensionsWorkbenchService, LIST_WORKSPACE_UNSUPPORTED_EXTENSIONS_COMMAND_ID } from '../../extensions/common/extensions.js';
 import { APPLICATION_SCOPES, IWorkbenchConfigurationService } from '../../../services/configuration/common/configuration.js';
-import { IExtensionManifestPropertiesService } from '../../../services/extensions/common/extensionManifestPropertiesService.js';
 import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uriIdentity.js';
 import { WorkspaceTrustEditorInput } from '../../../services/workspaces/browser/workspaceTrustEditorInput.js';
 import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
-import { getExtensionDependencies } from '../../../../platform/extensionManagement/common/extensionManagementUtil.js';
-import { EnablementState, IWorkbenchExtensionEnablementService } from '../../../services/extensionManagement/common/extensionManagement.js';
 import { posix, win32 } from '../../../../base/common/path.js';
 import { hasDriveLetter, toSlashes } from '../../../../base/common/extpath.js';
 import { StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
@@ -693,12 +689,9 @@ export class WorkspaceTrustEditor extends EditorPane {
 		@IThemeService themeService: IThemeService,
 		@IStorageService storageService: IStorageService,
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
-		@IExtensionsWorkbenchService private readonly extensionWorkbenchService: IExtensionsWorkbenchService,
-		@IExtensionManifestPropertiesService private readonly extensionManifestPropertiesService: IExtensionManifestPropertiesService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IWorkspaceTrustManagementService private readonly workspaceTrustManagementService: IWorkspaceTrustManagementService,
 		@IWorkbenchConfigurationService private readonly configurationService: IWorkbenchConfigurationService,
-		@IWorkbenchExtensionEnablementService private readonly extensionEnablementService: IWorkbenchExtensionEnablementService,
 		@IProductService private readonly productService: IProductService,
 		@IKeybindingService private readonly keybindingService: IKeybindingService,
 	) { super(WorkspaceTrustEditor.ID, group, telemetryService, themeService, storageService); }
@@ -773,7 +766,6 @@ export class WorkspaceTrustEditor extends EditorPane {
 	}
 
 	private registerListeners(): void {
-		this._register(this.extensionWorkbenchService.onChange(() => this.render()));
 		this._register(this.configurationService.onDidChangeRestrictedSettings(() => this.render()));
 		this._register(this.workspaceTrustManagementService.onDidChangeTrust(() => this.render()));
 		this._register(this.workspaceTrustManagementService.onDidChangeTrustedFolders(() => this.render()));
@@ -914,7 +906,7 @@ export class WorkspaceTrustEditor extends EditorPane {
 		}).length;
 
 		// Features List
-		this.renderAffectedFeatures(settingsRequiringTrustedWorkspaceCount, this.getExtensionCount());
+		this.renderAffectedFeatures(settingsRequiringTrustedWorkspaceCount);
 
 		// Configuration Tree
 		this.workspaceTrustedUrisTable.updateTable();
@@ -922,37 +914,6 @@ export class WorkspaceTrustEditor extends EditorPane {
 		this.bodyScrollBar.getDomNode().style.height = `calc(100% - ${this.headerContainer.clientHeight}px)`;
 		this.bodyScrollBar.scanDomNode();
 		this.rendering = false;
-	}
-
-	private getExtensionCount(): number {
-		const set = new Set<string>();
-
-		const inVirtualWorkspace = isVirtualWorkspace(this.workspaceService.getWorkspace());
-		const localExtensions = this.extensionWorkbenchService.local.filter(ext => ext.local).map(ext => ext.local!);
-
-		for (const extension of localExtensions) {
-			const enablementState = this.extensionEnablementService.getEnablementState(extension);
-			if (enablementState !== EnablementState.EnabledGlobally && enablementState !== EnablementState.EnabledWorkspace &&
-				enablementState !== EnablementState.DisabledByTrustRequirement && enablementState !== EnablementState.DisabledByExtensionDependency) {
-				continue;
-			}
-
-			if (inVirtualWorkspace && this.extensionManifestPropertiesService.getExtensionVirtualWorkspaceSupportType(extension.manifest) === false) {
-				continue;
-			}
-
-			if (this.extensionManifestPropertiesService.getExtensionUntrustedWorkspaceSupportType(extension.manifest) !== true) {
-				set.add(extension.identifier.id);
-				continue;
-			}
-
-			const dependencies = getExtensionDependencies(localExtensions, extension);
-			if (dependencies.some(ext => this.extensionManifestPropertiesService.getExtensionUntrustedWorkspaceSupportType(ext.manifest) === false)) {
-				set.add(extension.identifier.id);
-			}
-		}
-
-		return set.size;
 	}
 
 	private createHeaderElement(parent: HTMLElement): void {
@@ -977,7 +938,7 @@ export class WorkspaceTrustEditor extends EditorPane {
 		this.untrustedContainer = append(this.affectedFeaturesContainer, $('.workspace-trust-limitations.untrusted', { tabIndex: '0' }));
 	}
 
-	private async renderAffectedFeatures(numSettings: number, numExtensions: number): Promise<void> {
+	private async renderAffectedFeatures(numSettings: number): Promise<void> {
 		clearNode(this.trustedContainer);
 		clearNode(this.untrustedContainer);
 
@@ -989,13 +950,13 @@ export class WorkspaceTrustEditor extends EditorPane {
 			[
 				localize('trustedTasks', "Tasks are allowed to run"),
 				localize('trustedDebugging', "Debugging is enabled"),
-				localize('trustedExtensions', "All enabled extensions are activated")
+				localize('trustedExtensionsHorus', "Horus native features are enabled")
 			] :
 			[
 				localize('trustedTasks', "Tasks are allowed to run"),
 				localize('trustedDebugging', "Debugging is enabled"),
 				localize('trustedSettings', "All workspace settings are applied"),
-				localize('trustedExtensions', "All enabled extensions are activated")
+				localize('trustedExtensionsHorus', "Horus native features are enabled")
 			];
 		this.renderLimitationsListElement(this.trustedContainer, trustedContainerItems, ThemeIcon.asClassNameArray(checkListIcon));
 
@@ -1007,13 +968,13 @@ export class WorkspaceTrustEditor extends EditorPane {
 			[
 				localize('untrustedTasks', "Tasks are not allowed to run"),
 				localize('untrustedDebugging', "Debugging is disabled"),
-				fixBadLocalizedLinks(localize({ key: 'untrustedExtensions', comment: ['Please ensure the markdown link syntax is not broken up with whitespace [text block](link block)'] }, "[{0} extensions]({1}) are disabled or have limited functionality", numExtensions, `command:${LIST_WORKSPACE_UNSUPPORTED_EXTENSIONS_COMMAND_ID}`))
+				localize('untrustedExtensionsHorus', "Extension marketplace features are disabled in Horus")
 			] :
 			[
 				localize('untrustedTasks', "Tasks are not allowed to run"),
 				localize('untrustedDebugging', "Debugging is disabled"),
 				fixBadLocalizedLinks(numSettings ? localize({ key: 'untrustedSettings', comment: ['Please ensure the markdown link syntax is not broken up with whitespace [text block](link block)'] }, "[{0} workspace settings]({1}) are not applied", numSettings, 'command:settings.filterUntrusted') : localize('no untrustedSettings', "Workspace settings requiring trust are not applied")),
-				fixBadLocalizedLinks(localize({ key: 'untrustedExtensions', comment: ['Please ensure the markdown link syntax is not broken up with whitespace [text block](link block)'] }, "[{0} extensions]({1}) are disabled or have limited functionality", numExtensions, `command:${LIST_WORKSPACE_UNSUPPORTED_EXTENSIONS_COMMAND_ID}`))
+				localize('untrustedExtensionsHorus', "Extension marketplace features are disabled in Horus")
 			];
 		this.renderLimitationsListElement(this.untrustedContainer, untrustedContainerItems, ThemeIcon.asClassNameArray(xListIcon));
 
