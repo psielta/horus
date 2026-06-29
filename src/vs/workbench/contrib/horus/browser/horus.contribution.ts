@@ -16,24 +16,27 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
+import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { EditorExtensions, IEditorFactoryRegistry, IEditorSerializer } from '../../../common/editor.js';
 import { EditorInput } from '../../../common/editor/editorInput.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
-import { Extensions as ViewExtensions, IViewsRegistry } from '../../../common/views.js';
+import { Extensions as ViewExtensions, IViewContainersRegistry, IViewsRegistry, ViewContainerLocation } from '../../../common/views.js';
 import { VIEW_CONTAINER as EXPLORER_VIEW_CONTAINER } from '../../files/browser/explorerViewlet.js';
+import { WebviewViewPane } from '../../webviewView/browser/webviewViewPane.js';
+import { IWebviewViewService } from '../../webviewView/browser/webviewViewService.js';
 import { HorusPromptEditor } from './editors/promptEditor.js';
 import { HorusPromptEditorInput } from './editors/promptEditorInput.js';
 import { HorusLinkedPlanEditor } from './editors/linkedPlanEditor.js';
 import { HorusLinkedPlanEditorInput } from './editors/linkedPlanEditorInput.js';
-import { HorusCommandId, HorusContext, HORUS_PROMPT_DETAIL_VIEW_ID, HORUS_PROMPTS_VIEW_ID } from '../common/horus.js';
+import { HorusCommandId, HorusContext, HORUS_PROMPT_DETAIL_VIEW_ID, HORUS_PROMPTS_VIEW_ID, HORUS_VIEW_CONTAINER_ID, HORUS_WORKFLOW_BOARD_VIEW_ID } from '../common/horus.js';
 import { getHorusChildPromptTemplates, HorusChildPromptTemplate, HorusPromptTemplateInputDefinition, renderHorusChildPromptTemplate } from '../../../../platform/horus/common/horusPromptTemplates.js';
 import { resolveCurrentHorusWorkspace } from './horusNativeWorkspaces.js';
 import { createHorusLinkedDocumentVersionResource, createHorusPromptVersionResource, HorusVersionContentProvider } from './horusVersionContentProvider.js';
 import { horusWorkbenchState } from './horusWorkbenchState.js';
 import { HorusLinkedPlanMonitor } from './linkedPlanMonitor.js';
 import { defaultTerminalLaunchForPrompt, HorusTerminalAgentLaunch, HorusTerminalLauncher } from './horusTerminalLauncher.js';
-import { openHorusWorkflowBoard } from './workflow/horusWorkflowBoard.js';
+import { HorusWorkflowBoardViewResolver, openHorusWorkflowBoard } from './workflow/horusWorkflowBoard.js';
 import { HorusPromptDetailView } from './views/promptDetailView.js';
 import { HorusPromptListView } from './views/promptListView.js';
 
@@ -130,6 +133,26 @@ Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane
 	]
 );
 
+const horusViewContainer = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewContainersRegistry).registerViewContainer({
+	id: HORUS_VIEW_CONTAINER_ID,
+	title: localize2('horus', "Horus"),
+	icon: horusViewIcon,
+	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [HORUS_VIEW_CONTAINER_ID, { mergeViewWithContainerWhenSingleView: true }]),
+	hideIfEmpty: false,
+	order: 2
+}, ViewContainerLocation.Sidebar, { doNotRegisterOpenCommand: false });
+
+Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([
+	{
+		id: HORUS_WORKFLOW_BOARD_VIEW_ID,
+		name: localize2('horusWorkflowBoardView', "Workflow"),
+		containerIcon: horusViewIcon,
+		ctorDescriptor: new SyncDescriptor(WebviewViewPane),
+		canToggleVisibility: false,
+		canMoveView: false
+	}
+], horusViewContainer);
+
 Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([
 	{
 		id: HORUS_PROMPTS_VIEW_ID,
@@ -181,6 +204,22 @@ class HorusContextKeysContribution extends Disposable implements IWorkbenchContr
 registerWorkbenchContribution2(HorusContextKeysContribution.ID, HorusContextKeysContribution, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(HorusLinkedPlanMonitor.ID, HorusLinkedPlanMonitor, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(HorusVersionContentProvider.ID, HorusVersionContentProvider, WorkbenchPhase.AfterRestored);
+
+class HorusWorkflowBoardViewContribution extends Disposable implements IWorkbenchContribution {
+
+	static readonly ID = 'workbench.contrib.horus.workflowBoardView';
+
+	constructor(
+		@IWebviewViewService webviewViewService: IWebviewViewService,
+		@IInstantiationService instantiationService: IInstantiationService
+	) {
+		super();
+		const resolver = this._register(instantiationService.createInstance(HorusWorkflowBoardViewResolver));
+		this._register(webviewViewService.register(HORUS_WORKFLOW_BOARD_VIEW_ID, resolver));
+	}
+}
+
+registerWorkbenchContribution2(HorusWorkflowBoardViewContribution.ID, HorusWorkflowBoardViewContribution, WorkbenchPhase.AfterRestored);
 
 async function resolveWorkspaceForCommand(
 	workspaceContextService: IWorkspaceContextService,

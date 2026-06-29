@@ -1,6 +1,8 @@
 import { localize } from '../../../../nls.js';
 import { RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
 
+export const HORUS_VIEW_CONTAINER_ID = 'workbench.view.horus';
+export const HORUS_WORKFLOW_BOARD_VIEW_ID = 'workbench.horus.workflowBoard';
 export const HORUS_PROMPTS_VIEW_ID = 'workbench.horus.prompts';
 export const HORUS_PROMPT_DETAIL_VIEW_ID = 'workbench.horus.promptDetail';
 

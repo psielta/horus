@@ -7,10 +7,12 @@ import { HorusPrompt, HorusPromptStatus, HorusTaskSummary, HorusWorkflowActor, H
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { ACTIVE_GROUP } from '../../../../services/editor/common/editorService.js';
+import { IWebview } from '../../../webview/browser/webview.js';
 import { IWebviewWorkbenchService } from '../../../webviewPanel/browser/webviewWorkbenchService.js';
 import { WebviewInput } from '../../../webviewPanel/browser/webviewEditorInput.js';
+import { WebviewView } from '../../../webviewView/browser/webviewViewService.js';
 import { HorusCommandId } from '../../common/horus.js';
 import { defaultTerminalLaunchForPrompt, HorusTerminalAgentLaunch, HorusTerminalLauncher } from '../horusTerminalLauncher.js';
 import { resolveCurrentHorusWorkspace } from '../horusNativeWorkspaces.js';
@@ -68,31 +70,14 @@ export async function openHorusWorkflowBoard(instantiationService: IInstantiatio
 class HorusWorkflowBoardPanel extends Disposable {
 
 	private input: WebviewInput | undefined;
-	private board: readonly HorusTaskSummary[] = [];
-	private template: HorusWorkflowTemplateDto | undefined;
-	private currentWorkspace: HorusWorkspace | undefined;
-	private columns: readonly BoardColumn[] = [];
-	private selectedPromptId: string | undefined;
-	private filters: HorusWorkflowBoardQuery = {};
-	private viewMode: BoardViewMode = 'kanban';
-	private renderSequence = 0;
+	private controller: HorusWorkflowBoardController | undefined;
 
 	constructor(
 		private readonly onDisposed: () => void,
 		@IWebviewWorkbenchService private readonly webviewWorkbenchService: IWebviewWorkbenchService,
-		@IHorusStorageService private readonly horusStorageService: IHorusStorageService,
-		@ICommandService private readonly commandService: ICommandService,
-		@INotificationService private readonly notificationService: INotificationService,
-		@IInstantiationService private readonly instantiationService: IInstantiationService,
-		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService
+		@IInstantiationService private readonly instantiationService: IInstantiationService
 	) {
 		super();
-		this._register(this.horusStorageService.onDidChangeData(event => {
-			if (event.kind === 'prompt' || event.kind === 'linkedDocument' || event.kind === 'workflow' || event.kind === 'workspace' || event.kind === 'storage') {
-				this.refresh().catch(error => this.notificationService.error(error));
-			}
-		}));
-		this._register(this.workspaceContextService.onDidChangeWorkspaceFolders(() => this.refresh().catch(error => this.notificationService.error(error))));
 	}
 
 	async open(): Promise<void> {
@@ -113,7 +98,7 @@ class HorusWorkflowBoardPanel extends Disposable {
 			}, workflowBoardViewType, localize('horusWorkflowBoardTitle', "Horus Workflow"), ThemeIcon.fromId('horus-view-icon'), { group: ACTIVE_GROUP });
 
 			this._register(this.input.webview.onDidDispose(() => this.dispose()));
-			this._register(this.input.webview.onMessage(event => this.onMessage(event.message as WebviewMessage)));
+			this.controller = this._register(this.instantiationService.createInstance(HorusWorkflowBoardController, this.input.webview));
 		}
 
 		await this.refresh();
@@ -126,10 +111,77 @@ class HorusWorkflowBoardPanel extends Disposable {
 	}
 
 	async refresh(): Promise<void> {
-		if (!this.input) {
-			return;
-		}
+		await this.controller?.refresh();
+	}
 
+	override dispose(): void {
+		if (activeBoard === this) {
+			activeBoard = undefined;
+		}
+		this.onDisposed();
+		super.dispose();
+	}
+}
+
+export class HorusWorkflowBoardViewResolver extends Disposable {
+
+	constructor(
+		@IInstantiationService private readonly instantiationService: IInstantiationService
+	) {
+		super();
+	}
+
+	async resolve(webviewView: WebviewView): Promise<void> {
+		webviewView.title = localize('horusWorkflowBoardViewTitle', "Workflow");
+		webviewView.webview.options = {
+			...webviewView.webview.options,
+			retainContextWhenHidden: true
+		};
+		webviewView.webview.contentOptions = {
+			...webviewView.webview.contentOptions,
+			allowScripts: true,
+			allowForms: true
+		};
+
+		const store = this._register(new DisposableStore());
+		const controller = this.instantiationService.createInstance(HorusWorkflowBoardController, webviewView.webview);
+		store.add(controller);
+		store.add(webviewView.onDispose(() => store.dispose()));
+
+		await controller.refresh();
+	}
+}
+
+class HorusWorkflowBoardController extends Disposable {
+
+	private board: readonly HorusTaskSummary[] = [];
+	private template: HorusWorkflowTemplateDto | undefined;
+	private currentWorkspace: HorusWorkspace | undefined;
+	private columns: readonly BoardColumn[] = [];
+	private selectedPromptId: string | undefined;
+	private filters: HorusWorkflowBoardQuery = {};
+	private viewMode: BoardViewMode = 'kanban';
+	private renderSequence = 0;
+
+	constructor(
+		private readonly webview: IWebview,
+		@IHorusStorageService private readonly horusStorageService: IHorusStorageService,
+		@ICommandService private readonly commandService: ICommandService,
+		@INotificationService private readonly notificationService: INotificationService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService
+	) {
+		super();
+		this._register(this.horusStorageService.onDidChangeData(event => {
+			if (event.kind === 'prompt' || event.kind === 'linkedDocument' || event.kind === 'workflow' || event.kind === 'workspace' || event.kind === 'storage') {
+				this.refresh().catch(error => this.notificationService.error(error));
+			}
+		}));
+		this._register(this.workspaceContextService.onDidChangeWorkspaceFolders(() => this.refresh().catch(error => this.notificationService.error(error))));
+		this._register(this.webview.onMessage(event => this.onMessage(event.message as WebviewMessage)));
+	}
+
+	async refresh(): Promise<void> {
 		const sequence = ++this.renderSequence;
 		const currentWorkspace = await resolveCurrentHorusWorkspace(this.workspaceContextService, this.horusStorageService);
 		const [board, template] = await Promise.all([
@@ -137,7 +189,7 @@ class HorusWorkflowBoardPanel extends Disposable {
 			this.horusStorageService.getWorkflowTemplate()
 		]);
 
-		if (sequence !== this.renderSequence || !this.input) {
+		if (sequence !== this.renderSequence) {
 			return;
 		}
 
@@ -151,15 +203,7 @@ class HorusWorkflowBoardPanel extends Disposable {
 
 		const selectedWorkflow = this.selectedPromptId ? await this.horusStorageService.getWorkflow(this.selectedPromptId) : undefined;
 		const selectedPrompt = this.selectedPromptId ? await this.horusStorageService.getPrompt(this.selectedPromptId) : undefined;
-		this.input.webview.setHtml(this.renderHtml(selectedWorkflow, selectedPrompt));
-	}
-
-	override dispose(): void {
-		if (activeBoard === this) {
-			activeBoard = undefined;
-		}
-		this.onDisposed();
-		super.dispose();
+		this.webview.setHtml(this.renderHtml(selectedWorkflow, selectedPrompt));
 	}
 
 	private async onMessage(message: WebviewMessage): Promise<void> {
@@ -877,6 +921,38 @@ summary { cursor: pointer; }
 }
 .event p { margin: 2px 0 0; white-space: pre-wrap; }
 .empty { padding: 12px; text-align: center; border-radius: 6px; }
+@media (max-width: 900px) {
+	.toolbar, .filters {
+		align-items: stretch;
+		flex-direction: column;
+		padding: 10px;
+	}
+	.toolbar-actions, .details-actions, .field-row, .filters {
+		align-items: stretch;
+	}
+	.filters input, .filters select, .filters button, .toolbar-actions button {
+		width: 100%;
+		min-width: 0;
+	}
+	.layout {
+		grid-template-columns: minmax(0, 1fr);
+		min-height: auto;
+	}
+	.board {
+		flex-direction: column;
+		overflow-x: hidden;
+		padding: 10px;
+	}
+	.column {
+		flex: none;
+		width: auto;
+		min-height: 160px;
+	}
+	.details {
+		border-left: none;
+		border-top: 1px solid var(--vscode-panel-border);
+	}
+}
 `;
 	}
 
