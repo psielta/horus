@@ -76,6 +76,12 @@
 	cursor: pointer;
 }
 
+.horus-list-item-child {
+	margin-left: 14px;
+	padding-left: 10px;
+	border-left: 1px solid var(--vscode-tree-indentGuidesStroke);
+}
+
 .horus-list-item:hover,
 .horus-list-item.selected {
 	background-color: var(--vscode-list-hoverBackground);

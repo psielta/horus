@@ -38,7 +38,7 @@ export class HorusWorkspaceListView extends HorusViewPane {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
 		this._register(this.horusStorageService.onDidChangeData(event => {
-			if (event.kind === 'workspace' || event.kind === 'storage') {
+			if (event.kind === 'workspace' || event.kind === 'prompt' || event.kind === 'storage') {
 				this.refresh().catch(error => this.renderMessage(String(error)));
 			}
 		}));

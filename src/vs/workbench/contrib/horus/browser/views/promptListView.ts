@@ -43,7 +43,7 @@ export class HorusPromptListView extends HorusViewPane {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
 		this._register(this.horusStorageService.onDidChangeData(event => {
-			if (event.kind === 'prompt' || event.kind === 'workspace' || event.kind === 'storage') {
+			if (event.kind === 'prompt' || event.kind === 'workflow' || event.kind === 'workspace' || event.kind === 'storage') {
 				this.refresh().catch(error => this.renderMessage(String(error)));
 			}
 		}));
@@ -63,6 +63,7 @@ export class HorusPromptListView extends HorusViewPane {
 		this.renderDisposables.clear();
 		DOM.clearNode(this.horusBody);
 		this.horusBody.appendChild(this.renderPromptListButton(localize('horusCreatePrompt', "Create Prompt"), () => this.commandService.executeCommand(HorusCommandId.CreatePrompt)));
+		this.horusBody.appendChild(this.renderPromptListButton(localize('horusOpenWorkflowBoard', "Open Workflow Board"), () => this.commandService.executeCommand(HorusCommandId.OpenWorkflowBoard)));
 
 		const workspaces = await resolveNativeHorusWorkspaces(this.workspaceContextService, this.horusStorageService);
 		if (isStaleRefresh()) {
@@ -80,36 +81,53 @@ export class HorusPromptListView extends HorusViewPane {
 			horusWorkbenchState.setSelectedWorkspaceId(selectedWorkspaceId);
 		}
 
-		const prompts = await this.horusStorageService.listPrompts({ workingDirectoryId: selectedWorkspaceId, rootOnly: true });
+		const prompts = await this.horusStorageService.listPrompts({ workingDirectoryId: selectedWorkspaceId });
 		if (isStaleRefresh()) {
 			return;
 		}
 
-		if (!prompts.length) {
+		const rootPrompts = prompts.filter(prompt => !prompt.parentPromptId);
+		const childrenByParent = new Map<string, HorusPrompt[]>();
+		for (const prompt of prompts) {
+			if (!prompt.parentPromptId) {
+				continue;
+			}
+			const children = childrenByParent.get(prompt.parentPromptId) ?? [];
+			children.push(prompt);
+			childrenByParent.set(prompt.parentPromptId, children);
+		}
+
+		if (!rootPrompts.length) {
 			horusWorkbenchState.setSelectedPromptId(undefined);
 			this.appendMessage(localize('horusNoPrompts', "No root prompts in this workspace."));
 			return;
 		}
 
 		const selectedPromptId = horusWorkbenchState.getSelectedPromptId();
-		const selectedPrompt = selectedPromptId ? await this.horusStorageService.getPrompt(selectedPromptId) : undefined;
+		const selectedPrompt = selectedPromptId ? prompts.find(prompt => prompt.id === selectedPromptId) : undefined;
 		if (isStaleRefresh()) {
 			return;
 		}
 
 		if (!selectedPrompt || selectedPrompt.workingDirectoryId !== selectedWorkspaceId) {
-			horusWorkbenchState.setSelectedPromptId(prompts[0].id);
+			horusWorkbenchState.setSelectedPromptId(rootPrompts[0].id);
 			return;
 		}
 
 		const list = DOM.append(this.horusBody, DOM.$('.horus-list'));
-		for (const prompt of prompts) {
+		for (const prompt of rootPrompts) {
 			list.appendChild(this.renderPrompt(prompt));
+			for (const child of childrenByParent.get(prompt.id) ?? []) {
+				list.appendChild(this.renderPrompt(child, true));
+			}
 		}
 	}
 
-	private renderPrompt(prompt: HorusPrompt): HTMLElement {
+	private renderPrompt(prompt: HorusPrompt, isChild = false): HTMLElement {
 		const item = DOM.$('.horus-list-item') as HTMLElement;
+		if (isChild) {
+			item.classList.add('horus-list-item-child');
+		}
 		if (horusWorkbenchState.getSelectedPromptId() === prompt.id) {
 			item.classList.add('selected');
 		}
@@ -118,7 +136,9 @@ export class HorusPromptListView extends HorusViewPane {
 		title.textContent = prompt.title;
 
 		const description = DOM.append(item, DOM.$('.horus-list-description'));
-		description.textContent = `v${prompt.currentVersion} - ${new Date(prompt.updatedAtUtc).toLocaleString()}`;
+		description.textContent = isChild
+			? localize('horusChildPromptListDescription', "Child prompt - v{0} - {1}", prompt.currentVersion, new Date(prompt.updatedAtUtc).toLocaleString())
+			: `v${prompt.currentVersion} - ${new Date(prompt.updatedAtUtc).toLocaleString()}`;
 
 		this.renderDisposables.add(DOM.addDisposableListener(item, DOM.EventType.CLICK, () => {
 			horusWorkbenchState.setSelectedPromptId(prompt.id);
