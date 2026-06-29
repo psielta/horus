@@ -24,6 +24,8 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
 import { Extensions as ViewExtensions, IViewContainersRegistry, IViewsRegistry, ViewContainerLocation } from '../../../common/views.js';
 import { HorusPromptEditor } from './editors/promptEditor.js';
 import { HorusPromptEditorInput } from './editors/promptEditorInput.js';
+import { HorusLinkedPlanEditor } from './editors/linkedPlanEditor.js';
+import { HorusLinkedPlanEditorInput } from './editors/linkedPlanEditorInput.js';
 import { HorusCommandId, HorusContext, HORUS_PROMPT_DETAIL_VIEW_ID, HORUS_PROMPTS_VIEW_ID, HORUS_VIEW_CONTAINER_ID, HORUS_WORKSPACES_VIEW_ID } from '../common/horus.js';
 import { getHorusChildPromptTemplates, HorusChildPromptTemplate, HorusPromptTemplateInputDefinition, renderHorusChildPromptTemplate } from '../../../../platform/horus/common/horusPromptTemplates.js';
 import { resolveNativeHorusWorkspaces } from './horusNativeWorkspaces.js';
@@ -74,8 +76,31 @@ class HorusPromptEditorInputSerializer implements IEditorSerializer {
 	}
 }
 
+class HorusLinkedPlanEditorInputSerializer implements IEditorSerializer {
+
+	canSerialize(editorInput: EditorInput): boolean {
+		return editorInput instanceof HorusLinkedPlanEditorInput;
+	}
+
+	serialize(editorInput: HorusLinkedPlanEditorInput): string {
+		return JSON.stringify({ linkedDocumentId: editorInput.linkedDocumentId, name: editorInput.getName() });
+	}
+
+	deserialize(_instantiationService: IInstantiationService, serializedEditor: string): HorusLinkedPlanEditorInput | undefined {
+		try {
+			const data = JSON.parse(serializedEditor) as { linkedDocumentId?: string; name?: string };
+			return data.linkedDocumentId ? new HorusLinkedPlanEditorInput(data.linkedDocumentId, data.name) : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+}
+
 Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory)
 	.registerEditorSerializer(HorusPromptEditorInput.ID, HorusPromptEditorInputSerializer);
+
+Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory)
+	.registerEditorSerializer(HorusLinkedPlanEditorInput.ID, HorusLinkedPlanEditorInputSerializer);
 
 Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
 	EditorPaneDescriptor.create(
@@ -85,6 +110,17 @@ Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane
 	),
 	[
 		new SyncDescriptor(HorusPromptEditorInput)
+	]
+);
+
+Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
+	EditorPaneDescriptor.create(
+		HorusLinkedPlanEditor,
+		HorusLinkedPlanEditor.ID,
+		localize('horusLinkedPlanEditor', "Horus Linked Plan Editor")
+	),
+	[
+		new SyncDescriptor(HorusLinkedPlanEditorInput)
 	]
 );
 
@@ -638,7 +674,7 @@ registerAction2(class extends Action2 {
 
 		const document = await resolveLinkedPlanForCommand(horusStorageService, notificationService, promptIdOrLinkedDocumentId);
 		if (document) {
-			await editorService.openEditor({ resource: URI.file(document.absolutePath), options: { pinned: true } });
+			await editorService.openEditor(new HorusLinkedPlanEditorInput(document.id, document.displayName ?? document.absolutePath), { pinned: true });
 		}
 	}
 });
