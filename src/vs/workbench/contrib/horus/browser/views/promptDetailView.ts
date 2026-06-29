@@ -74,9 +74,6 @@ export class HorusPromptDetailView extends HorusViewPane {
 		const metadata = DOM.append(this.horusBody, DOM.$('.horus-detail-meta'));
 		metadata.textContent = localize('horusPromptMetadata', "Version {0} - Updated {1}", prompt.currentVersion, new Date(prompt.updatedAtUtc).toLocaleString());
 
-		const content = DOM.append(this.horusBody, DOM.$('pre.horus-detail-content'));
-		content.textContent = prompt.content || localize('horusPromptEmptyContent', "(empty prompt)");
-
 		await this.renderLinkedPlan(prompt);
 		await this.renderChildPrompts(prompt);
 	}
