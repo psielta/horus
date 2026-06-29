@@ -32,6 +32,8 @@ import { resolveNativeHorusWorkspaces } from './horusNativeWorkspaces.js';
 import { createHorusLinkedDocumentVersionResource, createHorusPromptVersionResource, HorusVersionContentProvider } from './horusVersionContentProvider.js';
 import { horusWorkbenchState } from './horusWorkbenchState.js';
 import { HorusLinkedPlanMonitor } from './linkedPlanMonitor.js';
+import { defaultTerminalLaunchForPrompt, HorusTerminalAgentLaunch, HorusTerminalLauncher } from './horusTerminalLauncher.js';
+import { openHorusWorkflowBoard } from './workflow/horusWorkflowBoard.js';
 import { HorusPromptDetailView } from './views/promptDetailView.js';
 import { HorusPromptListView } from './views/promptListView.js';
 import { HorusWorkspaceListView } from './views/workspaceListView.js';
@@ -54,6 +56,11 @@ interface HorusChildPromptTemplatePick extends IQuickPickItem {
 interface HorusComparableVersion {
 	readonly versionNumber: number;
 	readonly createdAtUtc: string;
+}
+
+interface HorusLaunchPromptTerminalOptions {
+	readonly agent?: HorusTerminalAgentLaunch;
+	readonly submitPrompt?: boolean;
 }
 
 class HorusPromptEditorInputSerializer implements IEditorSerializer {
@@ -531,9 +538,34 @@ registerAction2(class extends Action2 {
 				kind: template.defaultKind,
 				changeNote: localize('horusChildPromptGeneratedViaTemplate', "Generated via \"{0}\"", template.displayName)
 			});
+			if (template.targetPhaseRole) {
+				await horusStorageService.advanceWorkflowToRole({
+					promptId: parent.id,
+					targetRole: template.targetPhaseRole,
+					sourceName: template.displayName,
+					isReReview: template.isReReview
+				});
+			}
 			horusWorkbenchState.setSelectedWorkspaceId(parent.workingDirectoryId);
 			horusWorkbenchState.setSelectedPromptId(child.id);
 			await commandService.executeCommand(HorusCommandId.OpenPrompt, child.id);
+			const launch = await quickInputService.pick([
+				{
+					label: localize('horusLaunchChildPromptNow', "Submit child prompt in native terminal"),
+					description: localize('horusLaunchChildPromptNowDescription', "Opens VS Code integrated terminal in the workspace and sends the prompt."),
+					launch: true
+				},
+				{
+					label: localize('horusOpenChildPromptOnly', "Only open the prompt"),
+					description: localize('horusOpenChildPromptOnlyDescription', "Do not start an agent terminal now."),
+					launch: false
+				}
+			], {
+				placeHolder: localize('horusLaunchChildPromptQuestion', "Launch this child prompt in a native terminal?")
+			});
+			if (launch?.launch) {
+				await commandService.executeCommand(HorusCommandId.LaunchPromptTerminal, child.id, { submitPrompt: true } satisfies HorusLaunchPromptTerminalOptions);
+			}
 			notificationService.info(localize('horusChildPromptCreated', "Child prompt created from {0}: {1}", template.displayName, child.title));
 		} catch (error) {
 			notificationService.error(error);
@@ -573,6 +605,64 @@ registerAction2(class extends Action2 {
 		horusWorkbenchState.setSelectedWorkspaceId(prompt.workingDirectoryId);
 		horusWorkbenchState.setSelectedPromptId(prompt.id);
 		await editorService.openEditor(new HorusPromptEditorInput(prompt.id, prompt.title), { pinned: true });
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: HorusCommandId.OpenWorkflowBoard,
+			title: localize2('horusOpenWorkflowBoardCommand', "Horus: Open Workflow Board"),
+			category: horusCategory,
+			f1: true
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const instantiationService = accessor.get(IInstantiationService);
+		const notificationService = accessor.get(INotificationService);
+
+		try {
+			await openHorusWorkflowBoard(instantiationService);
+		} catch (error) {
+			notificationService.error(error);
+		}
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: HorusCommandId.LaunchPromptTerminal,
+			title: localize2('horusLaunchPromptTerminalCommand', "Horus: Launch Prompt Terminal"),
+			category: horusCategory,
+			f1: true,
+			precondition: HorusContext.PromptSelected
+		});
+	}
+
+	async run(accessor: ServicesAccessor, promptId?: string, options?: HorusLaunchPromptTerminalOptions): Promise<void> {
+		const notificationService = accessor.get(INotificationService);
+		const horusStorageService = accessor.get(IHorusStorageService);
+		const instantiationService = accessor.get(IInstantiationService);
+
+		try {
+			const prompt = await resolveSelectedPromptForCommand(horusStorageService, notificationService, promptId);
+			if (!prompt) {
+				return;
+			}
+
+			const workspace = (await horusStorageService.listWorkspaces()).find(candidate => candidate.id === prompt.workingDirectoryId);
+			if (!workspace) {
+				notificationService.error(localize('horusPromptWorkspaceMissing', "The prompt workspace was not found."));
+				return;
+			}
+
+			const agent = options?.agent ?? defaultTerminalLaunchForPrompt(prompt);
+			await instantiationService.createInstance(HorusTerminalLauncher).launchPrompt(prompt, workspace, agent, options?.submitPrompt);
+		} catch (error) {
+			notificationService.error(error);
+		}
 	}
 });
 

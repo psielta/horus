@@ -57,6 +57,21 @@ suite('HorusIPC', () => {
 			linkPlanToPrompt: async () => { throw new Error('not implemented'); },
 			syncLinkedDocument: async () => { throw new Error('not implemented'); },
 			updateLinkedDocumentStatus: async () => { throw new Error('not implemented'); },
+			getWorkflowTemplate: async () => { throw new Error('not implemented'); },
+			updateWorkflowTemplate: async () => { throw new Error('not implemented'); },
+			listWorkflowBoard: async () => [],
+			getWorkflow: async () => undefined,
+			startWorkflow: async () => { throw new Error('not implemented'); },
+			advanceWorkflow: async () => { throw new Error('not implemented'); },
+			setWorkflowPhase: async () => { throw new Error('not implemented'); },
+			changeWorkflowActor: async () => { throw new Error('not implemented'); },
+			addWorkflowNote: async () => { throw new Error('not implemented'); },
+			addReviewVerdict: async () => { throw new Error('not implemented'); },
+			completeWorkflow: async () => { throw new Error('not implemented'); },
+			reopenWorkflow: async () => { throw new Error('not implemented'); },
+			updateTaskPhases: async () => { throw new Error('not implemented'); },
+			reorderBoardColumn: async () => undefined,
+			advanceWorkflowToRole: async () => undefined,
 			validateFileMentions: async () => []
 		};
 

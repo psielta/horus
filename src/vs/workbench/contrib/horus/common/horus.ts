@@ -16,6 +16,8 @@ export const enum HorusCommandId {
 	OpenLinkedPlanFile = 'horus.openLinkedPlanFile',
 	OpenLinkedPlanDiff = 'horus.openLinkedPlanDiff',
 	OpenPromptVersionDiff = 'horus.openPromptVersionDiff',
+	OpenWorkflowBoard = 'horus.openWorkflowBoard',
+	LaunchPromptTerminal = 'horus.launchPromptTerminal',
 	PauseLinkedPlan = 'horus.pauseLinkedPlan',
 	ResumeLinkedPlan = 'horus.resumeLinkedPlan',
 	Refresh = 'horus.refresh'

@@ -5,7 +5,7 @@ import { Disposable } from '../../../base/common/lifecycle.js';
 import { Emitter } from '../../../base/common/event.js';
 import { INativeEnvironmentService } from '../../environment/common/environment.js';
 import { IFileService } from '../../files/common/files.js';
-import { HorusCreateLinkedDocumentData, HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentQuery, HorusLinkedDocumentStatus, HorusLinkedDocumentSyncResult, HorusLinkedDocumentType, HorusLinkedDocumentVersion, HorusLinkedDocumentVersionSource, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptKind, HorusPromptQuery, HorusPromptStatus, HorusPromptVersion, HorusResolvedPromptFileReferenceData, HorusStorageHealth, HorusTargetAgent, HorusUpdateLinkedDocumentStatusData, HorusUpdatePromptData, HorusWorkspace } from '../common/horusTypes.js';
+import { HorusAdvanceWorkflowData, HorusAdvanceWorkflowToRoleData, HorusChangeWorkflowActorData, HorusCompleteWorkflowData, HorusCreateLinkedDocumentData, HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentQuery, HorusLinkedDocumentStatus, HorusLinkedDocumentSyncResult, HorusLinkedDocumentType, HorusLinkedDocumentVersion, HorusLinkedDocumentVersionSource, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptKind, HorusPromptQuery, HorusPromptStatus, HorusPromptVersion, HorusReopenWorkflowData, HorusReorderBoardColumnData, HorusResolvedPromptFileReferenceData, HorusReviewVerdictData, HorusSetWorkflowPhaseData, HorusStartWorkflowData, HorusStorageHealth, HorusTargetAgent, HorusTaskSummary, HorusUpdateLinkedDocumentStatusData, HorusUpdatePromptData, HorusUpdateTaskPhasesData, HorusUpdateWorkflowTemplateData, HorusWorkflowBoardQuery, HorusWorkflowDto, HorusWorkflowNoteData, HorusWorkflowTemplateDto, HorusWorkspace } from '../common/horusTypes.js';
 import { HorusDataChangeEvent, IHorusStorageService } from '../common/horusStorage.js';
 import { HorusBackupService } from './horusBackupService.js';
 import { HorusFileValidationService } from './horusFileValidationService.js';
@@ -14,6 +14,7 @@ import { horusMigrations } from './migrations/v001_initial.js';
 import { HorusLinkedDocumentRepository } from './repositories/linkedDocumentRepository.js';
 import { HorusPromptRepository } from './repositories/promptRepository.js';
 import { HorusWorkspaceRepository } from './repositories/workspaceRepository.js';
+import { HorusWorkflowRepository } from './repositories/workflowRepository.js';
 import { HorusSQLiteConnection } from './horusSQLiteConnection.js';
 import { HorusWriteQueue } from './horusWriteQueue.js';
 
@@ -46,6 +47,7 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 	private workspaceRepository: HorusWorkspaceRepository | undefined;
 	private promptRepository: HorusPromptRepository | undefined;
 	private linkedDocumentRepository: HorusLinkedDocumentRepository | undefined;
+	private workflowRepository: HorusWorkflowRepository | undefined;
 	private ready: Promise<void> | undefined;
 
 	constructor(
@@ -147,8 +149,21 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 	async createPrompt(data: HorusCreatePromptData): Promise<HorusPrompt> {
 		await this.ensureReady();
 		this.validatePromptFields(data.title, data.content);
-		const prompt = await this.writeQueue.enqueue(() => this.getPromptRepository().create(data));
+		const prompt = await this.writeQueue.enqueue(async () => {
+			const created = await this.getPromptRepository().create(data);
+			if (!created.parentPromptId) {
+				await this.getWorkflowRepository().startWorkflow({ promptId: created.id });
+			}
+			return created;
+		});
 		this.onDidChangeDataEmitter.fire({ kind: 'prompt', id: prompt.id });
+		this.onDidChangeDataEmitter.fire({ kind: 'workspace', id: prompt.workingDirectoryId });
+		if (prompt.parentPromptId) {
+			this.onDidChangeDataEmitter.fire({ kind: 'prompt', id: prompt.parentPromptId });
+		}
+		if (!prompt.parentPromptId) {
+			this.onDidChangeDataEmitter.fire({ kind: 'workflow', id: prompt.id });
+		}
 		return prompt;
 	}
 
@@ -269,6 +284,106 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 		return document;
 	}
 
+	async getWorkflowTemplate(): Promise<HorusWorkflowTemplateDto> {
+		await this.ensureReady();
+		return this.writeQueue.enqueue(() => this.getWorkflowRepository().getWorkflowTemplate());
+	}
+
+	async updateWorkflowTemplate(data: HorusUpdateWorkflowTemplateData): Promise<HorusWorkflowTemplateDto> {
+		await this.ensureReady();
+		const template = await this.writeQueue.enqueue(() => this.getWorkflowRepository().updateWorkflowTemplate(data));
+		this.onDidChangeDataEmitter.fire({ kind: 'workflow' });
+		return template;
+	}
+
+	async listWorkflowBoard(query?: HorusWorkflowBoardQuery): Promise<readonly HorusTaskSummary[]> {
+		await this.ensureReady();
+		return this.getWorkflowRepository().listBoard(query);
+	}
+
+	async getWorkflow(promptId: string): Promise<HorusWorkflowDto | undefined> {
+		await this.ensureReady();
+		return this.getWorkflowRepository().getWorkflow(promptId);
+	}
+
+	async startWorkflow(data: HorusStartWorkflowData): Promise<HorusWorkflowDto> {
+		await this.ensureReady();
+		const workflow = await this.writeQueue.enqueue(() => this.getWorkflowRepository().startWorkflow(data));
+		this.onDidChangeDataEmitter.fire({ kind: 'workflow', id: data.promptId });
+		return workflow;
+	}
+
+	async advanceWorkflow(data: HorusAdvanceWorkflowData): Promise<HorusWorkflowDto> {
+		await this.ensureReady();
+		const workflow = await this.writeQueue.enqueue(() => this.getWorkflowRepository().advanceWorkflow(data));
+		this.onDidChangeDataEmitter.fire({ kind: 'workflow', id: data.promptId });
+		return workflow;
+	}
+
+	async setWorkflowPhase(data: HorusSetWorkflowPhaseData): Promise<HorusWorkflowDto> {
+		await this.ensureReady();
+		const workflow = await this.writeQueue.enqueue(() => this.getWorkflowRepository().setWorkflowPhase(data));
+		this.onDidChangeDataEmitter.fire({ kind: 'workflow', id: data.promptId });
+		return workflow;
+	}
+
+	async changeWorkflowActor(data: HorusChangeWorkflowActorData): Promise<HorusWorkflowDto> {
+		await this.ensureReady();
+		const workflow = await this.writeQueue.enqueue(() => this.getWorkflowRepository().changeActor(data));
+		this.onDidChangeDataEmitter.fire({ kind: 'workflow', id: data.promptId });
+		return workflow;
+	}
+
+	async addWorkflowNote(data: HorusWorkflowNoteData): Promise<HorusWorkflowDto> {
+		await this.ensureReady();
+		const workflow = await this.writeQueue.enqueue(() => this.getWorkflowRepository().addNote(data));
+		this.onDidChangeDataEmitter.fire({ kind: 'workflow', id: data.promptId });
+		return workflow;
+	}
+
+	async addReviewVerdict(data: HorusReviewVerdictData): Promise<HorusWorkflowDto> {
+		await this.ensureReady();
+		const workflow = await this.writeQueue.enqueue(() => this.getWorkflowRepository().addReviewVerdict(data));
+		this.onDidChangeDataEmitter.fire({ kind: 'workflow', id: data.promptId });
+		return workflow;
+	}
+
+	async completeWorkflow(data: HorusCompleteWorkflowData): Promise<HorusWorkflowDto> {
+		await this.ensureReady();
+		const workflow = await this.writeQueue.enqueue(() => this.getWorkflowRepository().completeWorkflow(data));
+		this.onDidChangeDataEmitter.fire({ kind: 'workflow', id: data.promptId });
+		return workflow;
+	}
+
+	async reopenWorkflow(data: HorusReopenWorkflowData): Promise<HorusWorkflowDto> {
+		await this.ensureReady();
+		const workflow = await this.writeQueue.enqueue(() => this.getWorkflowRepository().reopenWorkflow(data));
+		this.onDidChangeDataEmitter.fire({ kind: 'workflow', id: data.promptId });
+		return workflow;
+	}
+
+	async updateTaskPhases(data: HorusUpdateTaskPhasesData): Promise<HorusWorkflowDto> {
+		await this.ensureReady();
+		const workflow = await this.writeQueue.enqueue(() => this.getWorkflowRepository().updateTaskPhases(data));
+		this.onDidChangeDataEmitter.fire({ kind: 'workflow', id: data.promptId });
+		return workflow;
+	}
+
+	async reorderBoardColumn(data: HorusReorderBoardColumnData): Promise<void> {
+		await this.ensureReady();
+		await this.writeQueue.enqueue(() => this.getWorkflowRepository().reorderBoardColumn(data));
+		this.onDidChangeDataEmitter.fire({ kind: 'workflow' });
+	}
+
+	async advanceWorkflowToRole(data: HorusAdvanceWorkflowToRoleData): Promise<HorusWorkflowDto | undefined> {
+		await this.ensureReady();
+		const workflow = await this.writeQueue.enqueue(() => this.getWorkflowRepository().advanceWorkflowToRole(data));
+		if (workflow) {
+			this.onDidChangeDataEmitter.fire({ kind: 'workflow', id: data.promptId });
+		}
+		return workflow;
+	}
+
 	validateFileMentions(request: HorusFileMentionValidationRequest): Promise<readonly HorusFileMentionValidationResult[]> {
 		return this.fileValidationService.validateMentions(request);
 	}
@@ -384,6 +499,7 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 				this.workspaceRepository = new HorusWorkspaceRepository(this.connection);
 				this.promptRepository = new HorusPromptRepository(this.connection);
 				this.linkedDocumentRepository = new HorusLinkedDocumentRepository(this.connection);
+				this.workflowRepository = new HorusWorkflowRepository(this.connection);
 				this.onDidChangeDataEmitter.fire({ kind: 'storage' });
 			})();
 		}
@@ -413,5 +529,13 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 		}
 
 		return this.linkedDocumentRepository;
+	}
+
+	private getWorkflowRepository(): HorusWorkflowRepository {
+		if (!this.workflowRepository) {
+			throw new Error('Horus workflow repository is not initialized');
+		}
+
+		return this.workflowRepository;
 	}
 }

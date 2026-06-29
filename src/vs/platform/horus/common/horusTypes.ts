@@ -234,6 +234,70 @@ export interface HorusPromptWorkflowEvent extends HorusEntity {
 	readonly occurredAtUtc: HorusDateTime;
 }
 
+export interface HorusWorkflowPhaseDto extends HorusEntity {
+	readonly name: string;
+	readonly defaultActor: HorusWorkflowActor;
+	readonly orderIndex: number;
+	readonly color: string;
+	readonly role: HorusWorkflowPhaseRole | null;
+}
+
+export interface HorusWorkflowEventDto extends HorusEntity {
+	readonly type: HorusWorkflowEventType;
+	readonly phaseId: HorusUuid | null;
+	readonly phaseNameSnapshot: string | null;
+	readonly actor: HorusWorkflowActor | null;
+	readonly note: string | null;
+	readonly occurredAtUtc: HorusDateTime;
+}
+
+export interface HorusWorkflowDto extends HorusEntity {
+	readonly promptId: HorusUuid;
+	readonly status: HorusWorkflowStatus;
+	readonly currentPhaseId: HorusUuid | null;
+	readonly currentPhaseName: string | null;
+	readonly currentPhaseColor: string | null;
+	readonly currentActor: HorusWorkflowActor | null;
+	readonly startedAtUtc: HorusDateTime;
+	readonly enteredCurrentPhaseAtUtc: HorusDateTime | null;
+	readonly currentPhaseIteration: number;
+	readonly reviewVerdictSourcePhaseName: string | null;
+	readonly updatedAtUtc: HorusDateTime;
+	readonly rowVersion: number;
+	readonly phases: readonly HorusWorkflowPhaseDto[];
+	readonly events: readonly HorusWorkflowEventDto[];
+}
+
+export interface HorusWorkflowTemplateDto extends HorusEntity {
+	readonly name: string;
+	readonly phases: readonly HorusWorkflowPhaseDto[];
+}
+
+export interface HorusTaskSummary {
+	readonly promptId: HorusUuid;
+	readonly workingDirectoryId: HorusUuid;
+	readonly workingDirectoryName: string;
+	readonly taskNumber: string | null;
+	readonly title: string;
+	readonly promptStatus: HorusPromptStatus;
+	readonly workflowStatus: HorusWorkflowStatus | null;
+	readonly currentPhaseId: HorusUuid | null;
+	readonly currentPhaseName: string | null;
+	readonly currentPhaseColor: string | null;
+	readonly currentActor: HorusWorkflowActor | null;
+	readonly enteredCurrentPhaseAtUtc: HorusDateTime | null;
+	readonly currentPhaseIteration: number;
+	readonly reviewVerdictSourcePhaseName: string | null;
+	readonly updatedAtUtc: HorusDateTime;
+	readonly hasChildPrompts: boolean;
+	readonly hasLinkedPlan: boolean;
+	readonly linkedDocumentId: HorusUuid | null;
+	readonly pullRequestReference: string | null;
+	readonly promptRowVersion: number;
+	readonly phases: readonly HorusWorkflowPhaseDto[];
+	readonly workflowRowVersion: number | null;
+}
+
 export interface HorusAiChatSession extends HorusAuditableEntity {
 	readonly workingDirectoryId: HorusUuid | null;
 	readonly promptId: HorusUuid | null;
@@ -391,6 +455,91 @@ export interface HorusPromptQuery {
 	readonly rootOnly?: boolean;
 	readonly parentPromptId?: HorusUuid | null;
 	readonly includeArchived?: boolean;
+}
+
+export interface HorusWorkflowBoardQuery {
+	readonly workingDirectoryId?: HorusUuid;
+	readonly promptStatus?: HorusPromptStatus;
+	readonly workflowStatus?: HorusWorkflowStatus;
+	readonly q?: string;
+}
+
+export interface HorusStartWorkflowData {
+	readonly promptId: HorusUuid;
+	readonly initialPhaseOrderIndex?: number | null;
+}
+
+export interface HorusAdvanceWorkflowData {
+	readonly promptId: HorusUuid;
+	readonly rowVersion: number;
+	readonly note?: string | null;
+}
+
+export interface HorusSetWorkflowPhaseData {
+	readonly promptId: HorusUuid;
+	readonly phaseId: HorusUuid;
+	readonly rowVersion: number;
+	readonly actor?: HorusWorkflowActor | null;
+	readonly note?: string | null;
+}
+
+export interface HorusChangeWorkflowActorData {
+	readonly promptId: HorusUuid;
+	readonly rowVersion: number;
+	readonly actor: HorusWorkflowActor;
+	readonly note?: string | null;
+}
+
+export interface HorusWorkflowNoteData {
+	readonly promptId: HorusUuid;
+	readonly note: string;
+}
+
+export interface HorusReviewVerdictData {
+	readonly promptId: HorusUuid;
+	readonly rowVersion: number;
+	readonly verdict: string;
+}
+
+export interface HorusCompleteWorkflowData {
+	readonly promptId: HorusUuid;
+	readonly rowVersion: number;
+	readonly note?: string | null;
+}
+
+export interface HorusReopenWorkflowData {
+	readonly promptId: HorusUuid;
+	readonly rowVersion: number;
+	readonly phaseId?: HorusUuid | null;
+}
+
+export interface HorusWorkflowPhaseInput {
+	readonly id?: HorusUuid | null;
+	readonly name: string;
+	readonly defaultActor: HorusWorkflowActor;
+	readonly orderIndex: number;
+	readonly color: string;
+}
+
+export interface HorusUpdateTaskPhasesData {
+	readonly promptId: HorusUuid;
+	readonly rowVersion: number;
+	readonly phases: readonly HorusWorkflowPhaseInput[];
+}
+
+export interface HorusUpdateWorkflowTemplateData {
+	readonly phases: readonly HorusWorkflowPhaseInput[];
+}
+
+export interface HorusReorderBoardColumnData {
+	readonly orderedPromptIds: readonly HorusUuid[];
+}
+
+export interface HorusAdvanceWorkflowToRoleData {
+	readonly promptId: HorusUuid;
+	readonly targetRole: HorusWorkflowPhaseRole;
+	readonly sourceName: string;
+	readonly isReReview?: boolean;
 }
 
 export interface HorusFileMentionValidationRequest {

@@ -1,4 +1,4 @@
-import { HorusPromptKind, HorusTargetAgent } from './horusTypes.js';
+import { HorusPromptKind, HorusTargetAgent, HorusWorkflowPhaseRole } from './horusTypes.js';
 
 export const enum HorusPromptTemplateKey {
 	ReviewPlan = 1,
@@ -41,6 +41,7 @@ export interface HorusChildPromptTemplate {
 	readonly defaultTargetAgent: HorusTargetAgent;
 	readonly defaultKind: HorusPromptKind;
 	readonly isReReview?: boolean;
+	readonly targetPhaseRole?: HorusWorkflowPhaseRole;
 	readonly inputs: readonly HorusPromptTemplateInputDefinition[];
 	render(context: HorusChildPromptTemplateContext): HorusRenderedPromptTemplate;
 }
@@ -67,6 +68,7 @@ const templates: readonly HorusChildPromptTemplate[] = [
 		description: 'Gera um prompt para validar, aprovar ou apontar melhorias em um plano.',
 		defaultTargetAgent: HorusTargetAgent.Codex,
 		defaultKind: HorusPromptKind.Review,
+		targetPhaseRole: HorusWorkflowPhaseRole.PlanReview,
 		inputs: [],
 		render: context => ({
 			title: `Revisar plano: ${context.displayName}`,
@@ -79,6 +81,7 @@ const templates: readonly HorusChildPromptTemplate[] = [
 		description: 'Gera um prompt para implementar o plano aprovado.',
 		defaultTargetAgent: HorusTargetAgent.Codex,
 		defaultKind: HorusPromptKind.Implementation,
+		targetPhaseRole: HorusWorkflowPhaseRole.Implementation,
 		inputs: [],
 		render: context => ({
 			title: `Implementar plano: ${context.displayName}`,
@@ -91,6 +94,7 @@ const templates: readonly HorusChildPromptTemplate[] = [
 		description: 'Gera um prompt de revisao incluindo o prompt original que originou o plano.',
 		defaultTargetAgent: HorusTargetAgent.Codex,
 		defaultKind: HorusPromptKind.Review,
+		targetPhaseRole: HorusWorkflowPhaseRole.PlanReview,
 		inputs: [],
 		render: context => ({
 			title: `Revisar plano com prompt pai: ${context.displayName}`,
@@ -112,6 +116,7 @@ Dado o plano "${context.absolutePath}", valide o plano, aprove-o ou aponte melho
 		defaultTargetAgent: HorusTargetAgent.Codex,
 		defaultKind: HorusPromptKind.Review,
 		isReReview: true,
+		targetPhaseRole: HorusWorkflowPhaseRole.PlanReview,
 		inputs: [],
 		render: context => ({
 			title: `Revisar plano novamente: ${context.displayName}`,
@@ -124,6 +129,7 @@ Dado o plano "${context.absolutePath}", valide o plano, aprove-o ou aponte melho
 		description: 'Gera um prompt para implementar o plano em uma worktree separada e abrir PR.',
 		defaultTargetAgent: HorusTargetAgent.Codex,
 		defaultKind: HorusPromptKind.Implementation,
+		targetPhaseRole: HorusWorkflowPhaseRole.Implementation,
 		inputs: [],
 		render: context => ({
 			title: `Implementar em worktree: ${context.displayName}`,
@@ -138,6 +144,7 @@ Preserve o checkout principal e as alteracoes locais nao relacionadas. Ao termin
 		description: 'Gera um prompt de revisao para a PR que implementou o plano.',
 		defaultTargetAgent: HorusTargetAgent.Codex,
 		defaultKind: HorusPromptKind.General,
+		targetPhaseRole: HorusWorkflowPhaseRole.CodeReview,
 		inputs: [pullRequestInput],
 		render: context => {
 			const pullRequestReference = formatPullRequestReference(getInputValue(context, 'pullRequest'));
@@ -160,6 +167,7 @@ Priorize bugs, riscos de comportamento e testes ausentes. Reporte os achados com
 		defaultTargetAgent: HorusTargetAgent.Codex,
 		defaultKind: HorusPromptKind.General,
 		isReReview: true,
+		targetPhaseRole: HorusWorkflowPhaseRole.CodeReview,
 		inputs: [pullRequestInput, codexResponseInput],
 		render: context => {
 			const pullRequestReference = formatPullRequestReference(getInputValue(context, 'pullRequest'));
@@ -188,6 +196,7 @@ Trate a resposta do Codex como um repasse, nao como prova. Priorize bugs nao res
 		description: 'Gera um prompt para atualizar a branch ou worktree atual com as ultimas alteracoes da main remota usando rebase.',
 		defaultTargetAgent: HorusTargetAgent.Codex,
 		defaultKind: HorusPromptKind.General,
+		targetPhaseRole: HorusWorkflowPhaseRole.Rebase,
 		inputs: [],
 		render: () => ({
 			title: 'Atualizar branch com main',
@@ -202,6 +211,7 @@ Preserve as alteracoes locais nao relacionadas. Se houver conflitos, pare e me a
 		description: 'Gera um prompt para o Codex fazer merge seguro da PR.',
 		defaultTargetAgent: HorusTargetAgent.Codex,
 		defaultKind: HorusPromptKind.General,
+		targetPhaseRole: HorusWorkflowPhaseRole.Merge,
 		inputs: [pullRequestInput],
 		render: context => {
 			const pullRequestReference = formatPullRequestReference(getInputValue(context, 'pullRequest'));

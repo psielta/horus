@@ -1,13 +1,13 @@
 import { Event } from '../../../base/common/event.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
-import { HorusCreateLinkedDocumentData, HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentQuery, HorusLinkedDocumentSyncResult, HorusLinkedDocumentVersion, HorusLinkedDocumentVersionSource, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusPromptVersion, HorusStorageHealth, HorusUpdateLinkedDocumentStatusData, HorusUpdatePromptData, HorusWorkspace } from './horusTypes.js';
+import { HorusAdvanceWorkflowData, HorusAdvanceWorkflowToRoleData, HorusChangeWorkflowActorData, HorusCompleteWorkflowData, HorusCreateLinkedDocumentData, HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentQuery, HorusLinkedDocumentSyncResult, HorusLinkedDocumentVersion, HorusLinkedDocumentVersionSource, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusPromptVersion, HorusReopenWorkflowData, HorusReorderBoardColumnData, HorusReviewVerdictData, HorusSetWorkflowPhaseData, HorusStartWorkflowData, HorusStorageHealth, HorusTaskSummary, HorusUpdateLinkedDocumentStatusData, HorusUpdatePromptData, HorusUpdateTaskPhasesData, HorusUpdateWorkflowTemplateData, HorusWorkflowBoardQuery, HorusWorkflowDto, HorusWorkflowNoteData, HorusWorkflowTemplateDto, HorusWorkspace } from './horusTypes.js';
 
 export const HORUS_STORAGE_CHANNEL = 'horus/storage';
 
 export const IHorusStorageService = createDecorator<IHorusStorageService>('horusStorageService');
 
 export interface HorusDataChangeEvent {
-	readonly kind: 'workspace' | 'prompt' | 'linkedDocument' | 'storage';
+	readonly kind: 'workspace' | 'prompt' | 'linkedDocument' | 'workflow' | 'storage';
 	readonly id?: string;
 }
 
@@ -32,5 +32,20 @@ export interface IHorusStorageService {
 	linkPlanToPrompt(data: HorusCreateLinkedDocumentData): Promise<HorusLinkedDocumentSyncResult>;
 	syncLinkedDocument(linkedDocumentId: string, source?: HorusLinkedDocumentVersionSource): Promise<HorusLinkedDocumentSyncResult>;
 	updateLinkedDocumentStatus(data: HorusUpdateLinkedDocumentStatusData): Promise<HorusLinkedDocument>;
+	getWorkflowTemplate(): Promise<HorusWorkflowTemplateDto>;
+	updateWorkflowTemplate(data: HorusUpdateWorkflowTemplateData): Promise<HorusWorkflowTemplateDto>;
+	listWorkflowBoard(query?: HorusWorkflowBoardQuery): Promise<readonly HorusTaskSummary[]>;
+	getWorkflow(promptId: string): Promise<HorusWorkflowDto | undefined>;
+	startWorkflow(data: HorusStartWorkflowData): Promise<HorusWorkflowDto>;
+	advanceWorkflow(data: HorusAdvanceWorkflowData): Promise<HorusWorkflowDto>;
+	setWorkflowPhase(data: HorusSetWorkflowPhaseData): Promise<HorusWorkflowDto>;
+	changeWorkflowActor(data: HorusChangeWorkflowActorData): Promise<HorusWorkflowDto>;
+	addWorkflowNote(data: HorusWorkflowNoteData): Promise<HorusWorkflowDto>;
+	addReviewVerdict(data: HorusReviewVerdictData): Promise<HorusWorkflowDto>;
+	completeWorkflow(data: HorusCompleteWorkflowData): Promise<HorusWorkflowDto>;
+	reopenWorkflow(data: HorusReopenWorkflowData): Promise<HorusWorkflowDto>;
+	updateTaskPhases(data: HorusUpdateTaskPhasesData): Promise<HorusWorkflowDto>;
+	reorderBoardColumn(data: HorusReorderBoardColumnData): Promise<void>;
+	advanceWorkflowToRole(data: HorusAdvanceWorkflowToRoleData): Promise<HorusWorkflowDto | undefined>;
 	validateFileMentions(request: HorusFileMentionValidationRequest): Promise<readonly HorusFileMentionValidationResult[]>;
 }
