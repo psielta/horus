@@ -6,15 +6,16 @@ import { Dimension } from '../../../../../base/browser/dom.js';
 import { MarkdownString } from '../../../../../base/common/htmlContent.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
-import { relativePath as resourceRelativePath } from '../../../../../base/common/resources.js';
+import { joinPath, relativePath as resourceRelativePath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
 import { IEditorConstructionOptions } from '../../../../../editor/browser/config/editorConfiguration.js';
 import { Position } from '../../../../../editor/common/core/position.js';
 import { Range } from '../../../../../editor/common/core/range.js';
+import { IEditorDecorationsCollection } from '../../../../../editor/common/editorCommon.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
-import { CompletionContext, CompletionItem, CompletionItemKind, CompletionList } from '../../../../../editor/common/languages.js';
-import { ITextModel } from '../../../../../editor/common/model.js';
+import { CompletionContext, CompletionItem, CompletionItemKind, CompletionList, ILinksList } from '../../../../../editor/common/languages.js';
+import { IModelDeltaDecoration, ITextModel, TrackedRangeStickiness } from '../../../../../editor/common/model.js';
 import { ILanguageFeaturesService } from '../../../../../editor/common/services/languageFeatures.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { localize } from '../../../../../nls.js';
@@ -72,6 +73,14 @@ const horusFileMentionExcludePattern = {
 	'**/.git/**': true
 };
 
+const horusFileMentionPattern = /(^|[\s([{"'])@["']?([^\s@]+)/g;
+const horusTrailingPathPunctuationPattern = /[)"',.;:!?]+$/;
+
+interface HorusFileMentionOccurrence {
+	readonly relativePath: string;
+	readonly range: Range;
+}
+
 export class HorusPromptEditor extends EditorPane {
 
 	static readonly ID = HorusPromptEditorInput.EDITOR_ID;
@@ -85,6 +94,7 @@ export class HorusPromptEditor extends EditorPane {
 	private elements: HorusPromptEditorElements | undefined;
 	private codeEditor: CodeEditorWidget | undefined;
 	private promptModel: ITextModel | undefined;
+	private mentionDecorations: IEditorDecorationsCollection | undefined;
 	private lastDimension: Dimension | undefined;
 	private currentInput: HorusPromptEditorInput | undefined;
 	private currentPrompt: HorusPrompt | undefined;
@@ -122,6 +132,8 @@ export class HorusPromptEditor extends EditorPane {
 
 	override async setInput(input: HorusPromptEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
+		this.currentInput?.setSaveHandler(undefined);
+		this.currentInput?.setRevertHandler(undefined);
 		this.currentInput = input;
 		await this.loadPrompt(input.promptId, token);
 	}
@@ -151,6 +163,10 @@ export class HorusPromptEditor extends EditorPane {
 	private clearEditorContent(): void {
 		this.previewRenderScheduler.cancel();
 		this.previewDisposables.clear();
+		this.currentInput?.setSaveHandler(undefined);
+		this.currentInput?.setRevertHandler(undefined);
+		this.mentionDecorations?.clear();
+		this.mentionDecorations = undefined;
 		this.codeEditor?.setModel(null);
 		this.codeEditor = undefined;
 		this.promptModel = undefined;
@@ -185,11 +201,13 @@ export class HorusPromptEditor extends EditorPane {
 		this.currentPrompt = prompt;
 		this.currentWorkspace = workspace;
 		this.savedSnapshot = this.toSnapshot(prompt);
-		this.dirty = false;
-		this.currentInput?.setName(prompt.title);
+		const draft = this.currentInput?.getDraft();
+		const promptToRender = draft ? { ...prompt, ...draft } : prompt;
+		this.dirty = !!draft;
+		this.currentInput?.setName(promptToRender.title);
 		horusWorkbenchState.setSelectedWorkspaceId(prompt.workingDirectoryId);
 		horusWorkbenchState.setSelectedPromptId(prompt.id);
-		this.render(prompt);
+		this.render(promptToRender);
 		this.scheduleMentionValidation();
 	}
 
@@ -258,6 +276,8 @@ export class HorusPromptEditor extends EditorPane {
 		const validation = DOM.append(root, DOM.$('.horus-editor-mentions'));
 
 		this.elements = { root, title, targetAgent, kind, status, editorBody, editorContainer, previewContainer, createChildButton, saveButton, viewModeButtons, validation, linkedPlan, statusMessage, metadata };
+		this.currentInput?.setSaveHandler(() => this.save());
+		this.currentInput?.setRevertHandler(() => this.revertDraft());
 
 		for (const element of [title, targetAgent, kind, status]) {
 			this.contentDisposables.add(DOM.addDisposableListener(element, DOM.EventType.INPUT, () => this.onEditorChanged()));
@@ -327,6 +347,8 @@ export class HorusPromptEditor extends EditorPane {
 		const options: IEditorConstructionOptions = {
 			ariaLabel: localize('horusPromptEditorAriaLabel', "Horus prompt Markdown editor"),
 			automaticLayout: false,
+			fixedOverflowWidgets: true,
+			links: true,
 			scrollBeyondLastLine: false,
 			wordWrap: 'on',
 			lineNumbers: 'on',
@@ -365,12 +387,14 @@ export class HorusPromptEditor extends EditorPane {
 		});
 		codeEditor.setModel(model);
 		this.codeEditor = codeEditor;
+		this.mentionDecorations = codeEditor.createDecorationsCollection();
 		this.contentDisposables.add(codeEditor);
 		if (createdModel) {
 			this.contentDisposables.add(model);
 		}
 		this.contentDisposables.add(codeEditor.onDidChangeModelContent(() => this.onEditorChanged()));
 		this.registerFileMentionCompletionProvider(model);
+		this.updateFileMentionDecorations();
 		this.lastDimension ? this.layout(this.lastDimension) : codeEditor.layout();
 	}
 
@@ -396,6 +420,39 @@ export class HorusPromptEditor extends EditorPane {
 					suggestions: await this.provideFileMentionCompletionItems(this.currentWorkspace, mention.pathPrefix, mention.range, token),
 					incomplete: true
 				};
+			}
+		}));
+
+		this.contentDisposables.add(this.languageFeaturesService.linkProvider.register({
+			language: 'markdown',
+			scheme: Schemas.vscode,
+			hasAccessToAllModels: true
+		}, {
+			provideLinks: async (candidateModel: ITextModel, token: CancellationToken): Promise<ILinksList> => {
+				if (candidateModel.uri.toString() !== model.uri.toString() || !this.currentWorkspace) {
+					return { links: [] };
+				}
+
+				const workspaceRoot = URI.file(this.currentWorkspace.absolutePath);
+				const links: ILinksList['links'] = [];
+				for (const mention of this.findFileMentionOccurrences(candidateModel)) {
+					if (token.isCancellationRequested) {
+						return { links: [] };
+					}
+
+					const resource = this.resolveFileMentionResource(workspaceRoot, mention.relativePath);
+					if (!resource) {
+						continue;
+					}
+
+					links.push({
+						range: mention.range,
+						url: resource,
+						tooltip: localize('horusPromptFileMentionLinkTooltip', "Open {0}", mention.relativePath)
+					});
+				}
+
+				return { links };
 			}
 		}));
 	}
@@ -472,6 +529,66 @@ export class HorusPromptEditor extends EditorPane {
 			|| relativePath.startsWith('.git/')
 			|| relativePath.endsWith('/.git')
 			|| relativePath.includes('/.git/');
+	}
+
+	private updateFileMentionDecorations(): void {
+		if (!this.promptModel || !this.mentionDecorations) {
+			return;
+		}
+
+		const decorations: IModelDeltaDecoration[] = [];
+		for (const mention of this.findFileMentionOccurrences(this.promptModel)) {
+			decorations.push({
+				range: mention.range,
+				options: {
+					description: 'horus-file-mention',
+					stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+					inlineClassName: 'horus-file-mention-link',
+					hoverMessage: new MarkdownString().appendText(localize('horusPromptFileMentionHover', "Ctrl+click to open {0}", mention.relativePath))
+				}
+			});
+		}
+
+		this.mentionDecorations.set(decorations);
+	}
+
+	private findFileMentionOccurrences(model: ITextModel): readonly HorusFileMentionOccurrence[] {
+		const occurrences: HorusFileMentionOccurrence[] = [];
+		for (let lineNumber = 1; lineNumber <= model.getLineCount(); lineNumber++) {
+			const line = model.getLineContent(lineNumber);
+			horusFileMentionPattern.lastIndex = 0;
+
+			let match: RegExpExecArray | null;
+			while ((match = horusFileMentionPattern.exec(line)) !== null) {
+				const rawPath = match[2] ?? '';
+				const normalizedPath = rawPath.replace(horusTrailingPathPunctuationPattern, '').replace(/^["']|["']$/g, '').trim().replace(/\\/g, '/');
+				if (!normalizedPath || (!/[\\/]/.test(normalizedPath) && !/\.[^./\\]+$/.test(normalizedPath)) || this.isExcludedFileMentionPath(normalizedPath)) {
+					continue;
+				}
+
+				const boundaryLength = match[1]?.length ?? 0;
+				const mentionStartOffset = match.index + boundaryLength;
+				const matchedMention = match[0].slice(boundaryLength);
+				const hasOpeningQuote = matchedMention.startsWith('@"') || matchedMention.startsWith("@'");
+				const pathStartOffset = mentionStartOffset + 1 + (hasOpeningQuote ? 1 : 0);
+				const visiblePathLength = rawPath.replace(horusTrailingPathPunctuationPattern, '').replace(/["']$/g, '').length;
+				occurrences.push({
+					relativePath: normalizedPath,
+					range: new Range(lineNumber, mentionStartOffset + 1, lineNumber, pathStartOffset + visiblePathLength + 1)
+				});
+			}
+		}
+
+		return occurrences;
+	}
+
+	private resolveFileMentionResource(workspaceRoot: URI, relativePath: string): URI | undefined {
+		const normalizedPath = relativePath.replace(/\\/g, '/');
+		if (normalizedPath.startsWith('/') || normalizedPath === '..' || normalizedPath.startsWith('../') || normalizedPath.includes('/../') || this.isExcludedFileMentionPath(normalizedPath)) {
+			return undefined;
+		}
+
+		return joinPath(workspaceRoot, ...normalizedPath.split('/').filter(segment => !!segment));
 	}
 
 	private renderViewModeButtons(parent: HTMLElement): ReadonlyMap<HorusPromptEditorViewMode, HTMLButtonElement> {
@@ -572,6 +689,7 @@ export class HorusPromptEditor extends EditorPane {
 
 	private onEditorChanged(): void {
 		this.updateDirtyState();
+		this.updateFileMentionDecorations();
 		this.scheduleMentionValidation();
 		this.schedulePreviewRender();
 	}
@@ -581,7 +699,9 @@ export class HorusPromptEditor extends EditorPane {
 			return;
 		}
 
-		this.dirty = !this.snapshotsEqual(this.savedSnapshot, this.readSnapshot());
+		const snapshot = this.readSnapshot();
+		this.dirty = !this.snapshotsEqual(this.savedSnapshot, snapshot);
+		this.currentInput?.setDraft(this.dirty ? snapshot : undefined);
 		this.elements.saveButton.disabled = !this.dirty;
 		this.showStatus(this.dirty ? localize('horusPromptEditorUnsaved', "Unsaved changes.") : localize('horusPromptEditorSaved', "Saved."), false);
 	}
@@ -640,15 +760,30 @@ export class HorusPromptEditor extends EditorPane {
 		}
 	}
 
-	private async save(): Promise<void> {
-		if (!this.elements || !this.currentPrompt) {
+	private async revertDraft(): Promise<void> {
+		if (!this.currentPrompt) {
+			this.currentInput?.setDraft(undefined);
 			return;
+		}
+
+		this.currentInput?.setDraft(undefined);
+		this.currentInput?.setName(this.currentPrompt.title);
+		this.savedSnapshot = this.toSnapshot(this.currentPrompt);
+		this.clearEditorContent();
+		this.render(this.currentPrompt);
+		this.scheduleMentionValidation();
+		this.schedulePreviewRender();
+	}
+
+	private async save(): Promise<boolean> {
+		if (!this.elements || !this.currentPrompt) {
+			return false;
 		}
 
 		const snapshot = this.readSnapshot();
 		if (!snapshot.title.trim()) {
 			this.showStatus(localize('horusPromptEditorTitleRequired', "Title is required."), true);
-			return;
+			return false;
 		}
 
 		this.elements.saveButton.disabled = true;
@@ -667,12 +802,14 @@ export class HorusPromptEditor extends EditorPane {
 
 		this.currentPrompt = updated;
 		this.savedSnapshot = this.toSnapshot(updated);
+		this.currentInput?.setDraft(undefined);
 		this.currentInput?.setName(updated.title);
 		this.setMetadata(this.elements.metadata, updated);
 		this.dirty = false;
 		this.updateDirtyState();
 		this.scheduleMentionValidation();
 		this.notificationService.info(localize('horusPromptEditorSavedNotification', "Horus prompt saved: {0}", updated.title));
+		return true;
 	}
 
 	private readSnapshot(): HorusPromptEditorSnapshot {

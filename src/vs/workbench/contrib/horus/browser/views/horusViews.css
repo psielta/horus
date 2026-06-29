@@ -366,6 +366,8 @@
 
 .horus-editor-content {
 	box-sizing: border-box;
+	position: relative;
+	z-index: 2;
 	flex: 1;
 	min-height: 240px;
 	color: var(--vscode-editor-foreground);
@@ -380,6 +382,8 @@
 
 .horus-editor-preview {
 	box-sizing: border-box;
+	position: relative;
+	z-index: 1;
 	flex: 1;
 	min-width: 0;
 	min-height: 240px;
@@ -428,6 +432,13 @@
 .horus-editor-preview.rendered-markdown th {
 	font-weight: 600;
 	background: var(--vscode-editor-lineHighlightBackground);
+}
+
+.horus-file-mention-link {
+	color: var(--vscode-textLink-foreground);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	cursor: pointer;
 }
 
 .horus-editor-mentions {
