@@ -1,7 +1,8 @@
 import { timeout } from '../../../../base/common/async.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
-import { HorusPrompt, HorusTargetAgent, HorusWorkspace } from '../../../../platform/horus/common/horusTypes.js';
+import { IHorusStorageService } from '../../../../platform/horus/common/horusStorage.js';
+import { HorusPrompt, HorusPromptTerminalSession, HorusPromptTerminalSessionStatus, HorusTargetAgent, HorusWorkspace } from '../../../../platform/horus/common/horusTypes.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { TerminalLocation } from '../../../../platform/terminal/common/terminal.js';
@@ -18,7 +19,8 @@ export const enum HorusTerminalAgentLaunch {
 
 export interface IHorusTerminalLauncher {
 	readonly _serviceBrand: undefined;
-	launchPrompt(prompt: HorusPrompt, workspace: HorusWorkspace, agent: HorusTerminalAgentLaunch, submitPrompt?: boolean): Promise<void>;
+	launchPrompt(prompt: HorusPrompt, workspace: HorusWorkspace, agent: HorusTerminalAgentLaunch, submitPrompt?: boolean): Promise<HorusPromptTerminalSession>;
+	focusTerminalInstance(terminalInstanceId: number): Promise<boolean>;
 }
 
 export class HorusTerminalLauncher implements IHorusTerminalLauncher {
@@ -28,21 +30,41 @@ export class HorusTerminalLauncher implements IHorusTerminalLauncher {
 	constructor(
 		@ITerminalService private readonly terminalService: ITerminalService,
 		@ITerminalGroupService private readonly terminalGroupService: ITerminalGroupService,
+		@IHorusStorageService private readonly horusStorageService: IHorusStorageService,
 		@ILogService private readonly logService: ILogService
 	) { }
 
-	async launchPrompt(prompt: HorusPrompt, workspace: HorusWorkspace, agent: HorusTerminalAgentLaunch, submitPrompt = false): Promise<void> {
+	async launchPrompt(prompt: HorusPrompt, workspace: HorusWorkspace, agent: HorusTerminalAgentLaunch, submitPrompt = false): Promise<HorusPromptTerminalSession> {
 		const launchCommand = this.resolveLaunchCommand(agent);
 		const followUp = this.resolveFollowUp(agent, prompt.content, submitPrompt);
 		const cwd = URI.file(workspace.absolutePath);
+		const terminalName = this.getTerminalName(prompt, agent);
+		const agentName = this.getAgentName(agent);
 		this.logService.info(`[Horus] Launching prompt terminal. prompt=${prompt.id} workspace=${workspace.id} cwd=${workspace.absolutePath} agent=${agent} submit=${submitPrompt}`);
 		const instance = await this.terminalService.createTerminal({
 			location: TerminalLocation.Panel,
 			cwd,
 			config: {
-				name: this.getTerminalName(prompt, agent),
+				name: terminalName,
 				cwd
 			}
+		});
+		const session = await this.horusStorageService.createPromptTerminalSession({
+			promptId: prompt.id,
+			workingDirectoryId: workspace.id,
+			terminalInstanceId: instance.instanceId,
+			terminalName,
+			agentName,
+			launchCommand,
+			submitPrompt
+		});
+		const disposeListener = instance.onDisposed(() => {
+			disposeListener.dispose();
+			this.horusStorageService.updatePromptTerminalSession({
+				id: session.id,
+				status: HorusPromptTerminalSessionStatus.Closed,
+				endedAtUtc: new Date().toISOString()
+			}).catch(error => this.logService.warn(`[Horus] Failed to close terminal session ${session.id}: ${error}`));
 		});
 
 		this.terminalService.setActiveInstance(instance);
@@ -56,6 +78,20 @@ export class HorusTerminalLauncher implements IHorusTerminalLauncher {
 			await instance.sendText(followUp.text, followUp.execute, true);
 			this.logService.info(`[Horus] Prompt sent to terminal. prompt=${prompt.id} execute=${followUp.execute}`);
 		}
+
+		return session;
+	}
+
+	async focusTerminalInstance(terminalInstanceId: number): Promise<boolean> {
+		const instance = this.terminalService.getInstanceFromId(terminalInstanceId);
+		if (!instance) {
+			return false;
+		}
+
+		this.terminalService.setActiveInstance(instance);
+		await this.terminalGroupService.showPanel(false);
+		await this.terminalService.focusInstance(instance);
+		return true;
 	}
 
 	private resolveLaunchCommand(agent: HorusTerminalAgentLaunch): string {

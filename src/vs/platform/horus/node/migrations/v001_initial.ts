@@ -1,5 +1,6 @@
 import { HorusMigration } from '../../common/horusMigration.js';
 import { HORUS_SYSTEM_USER_ID } from '../../common/horusTypes.js';
+import { v002PromptTerminalSessions } from './v002_prompt_terminal_sessions.js';
 
 export const v001Initial: HorusMigration = {
 	version: 1,
@@ -334,4 +335,4 @@ export const v001Initial: HorusMigration = {
 	]
 };
 
-export const horusMigrations: readonly HorusMigration[] = [v001Initial];
+export const horusMigrations: readonly HorusMigration[] = [v001Initial, v002PromptTerminalSessions];

@@ -1,5 +1,5 @@
 import { generateUuid } from '../../../../base/common/uuid.js';
-import { HORUS_SYSTEM_USER_ID, HorusAdvanceWorkflowToRoleData, HorusChangeWorkflowActorData, HorusCompleteWorkflowData, HorusPromptStatus, HorusReopenWorkflowData, HorusReorderBoardColumnData, HorusReviewVerdictData, HorusSetWorkflowPhaseData, HorusStartWorkflowData, HorusTaskSummary, HorusUpdateTaskPhasesData, HorusUpdateWorkflowTemplateData, HorusWorkflowActor, HorusWorkflowBoardQuery, HorusWorkflowDto, HorusWorkflowEventDto, HorusWorkflowEventType, HorusWorkflowNoteData, HorusWorkflowPhaseDto, HorusWorkflowPhaseInput, HorusWorkflowPhaseRole, HorusWorkflowStatus, HorusWorkflowTemplateDto } from '../../common/horusTypes.js';
+import { HORUS_SYSTEM_USER_ID, HorusAdvanceWorkflowToRoleData, HorusChangeWorkflowActorData, HorusCompleteWorkflowData, HorusPromptStatus, HorusPromptTerminalSessionStatus, HorusReopenWorkflowData, HorusReorderBoardColumnData, HorusReviewVerdictData, HorusSetWorkflowPhaseData, HorusStartWorkflowData, HorusTaskSummary, HorusUpdateTaskPhasesData, HorusUpdateWorkflowTemplateData, HorusWorkflowActor, HorusWorkflowBoardQuery, HorusWorkflowDto, HorusWorkflowEventDto, HorusWorkflowEventType, HorusWorkflowNoteData, HorusWorkflowPhaseDto, HorusWorkflowPhaseInput, HorusWorkflowPhaseRole, HorusWorkflowStatus, HorusWorkflowTemplateDto } from '../../common/horusTypes.js';
 import { HorusSQLiteConnection, HorusSQLiteRow } from '../horusSQLiteConnection.js';
 
 interface WorkflowTemplateRow extends HorusSQLiteRow {
@@ -72,6 +72,12 @@ interface LinkedDocumentBoardRow extends HorusSQLiteRow {
 interface PromptChildCountRow extends HorusSQLiteRow {
 	readonly parent_prompt_id: string;
 	readonly child_count: number;
+}
+
+interface PromptTerminalSessionCountRow extends HorusSQLiteRow {
+	readonly prompt_id: string;
+	readonly terminal_session_count: number;
+	readonly active_terminal_session_count: number;
 }
 
 interface CountRow extends HorusSQLiteRow {
@@ -210,6 +216,7 @@ export class HorusWorkflowRepository {
 		const phasesByWorkflowId = workflowIds.length ? await this.loadPhasesForWorkflows(workflowIds) : new Map<string, HorusWorkflowPhaseDto[]>();
 		const childrenByPromptId = await this.loadChildCounts(promptIds);
 		const linkedByPromptId = await this.loadLinkedDocumentsForPrompts(promptIds);
+		const terminalCountsByPromptId = await this.loadTerminalSessionCounts(promptIds);
 		const workflowsByPromptId = new Map(workflows.map(workflow => [workflow.prompt_id, workflow]));
 
 		const summaries: Array<{ readonly boardRank: number; readonly summary: HorusTaskSummary }> = [];
@@ -221,6 +228,7 @@ export class HorusWorkflowRepository {
 
 			const phases = workflow ? phasesByWorkflowId.get(workflow.id) ?? [] : [];
 			const linkedDocument = linkedByPromptId.get(prompt.id);
+			const terminalCounts = terminalCountsByPromptId.get(prompt.id);
 			const workflowUpdatedAt = workflow?.updated_at_utc;
 			const updatedAtUtc = workflowUpdatedAt && workflowUpdatedAt > prompt.updated_at_utc ? workflowUpdatedAt : prompt.updated_at_utc;
 
@@ -244,6 +252,8 @@ export class HorusWorkflowRepository {
 					updatedAtUtc,
 					hasChildPrompts: (childrenByPromptId.get(prompt.id) ?? 0) > 0,
 					hasLinkedPlan: !!linkedDocument,
+					terminalSessionCount: terminalCounts?.terminalSessionCount ?? 0,
+					activeTerminalSessionCount: terminalCounts?.activeTerminalSessionCount ?? 0,
 					linkedDocumentId: linkedDocument?.id ?? null,
 					pullRequestReference: linkedDocument?.pull_request_reference ?? null,
 					promptRowVersion: prompt.row_version,
@@ -836,6 +846,22 @@ export class HorusWorkflowRepository {
 			GROUP BY parent_prompt_id;
 		`, promptIds);
 		return new Map(rows.map(row => [row.parent_prompt_id, row.child_count]));
+	}
+
+	private async loadTerminalSessionCounts(promptIds: readonly string[]): Promise<Map<string, { readonly terminalSessionCount: number; readonly activeTerminalSessionCount: number }>> {
+		const rows = await this.connection.all<PromptTerminalSessionCountRow>(`
+			SELECT prompt_id,
+				COUNT(*) AS terminal_session_count,
+				SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS active_terminal_session_count
+			FROM prompt_terminal_sessions
+			WHERE prompt_id IN (${this.placeholders(promptIds)})
+			GROUP BY prompt_id;
+		`, [HorusPromptTerminalSessionStatus.Active, ...promptIds]);
+
+		return new Map(rows.map(row => [row.prompt_id, {
+			terminalSessionCount: row.terminal_session_count,
+			activeTerminalSessionCount: row.active_terminal_session_count
+		}]));
 	}
 
 	private async loadLinkedDocumentsForPrompts(promptIds: readonly string[]): Promise<Map<string, LinkedDocumentBoardRow>> {

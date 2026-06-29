@@ -92,6 +92,11 @@ export const enum HorusFutureTaskType {
 	Task = 3
 }
 
+export const enum HorusPromptTerminalSessionStatus {
+	Active = 1,
+	Closed = 2
+}
+
 export interface HorusEntity {
 	readonly id: HorusUuid;
 }
@@ -150,6 +155,22 @@ export interface HorusPromptFileReference extends HorusEntity {
 	readonly rawMention: string;
 	readonly exists: boolean;
 	readonly resolvedAtUtc: HorusDateTime | null;
+}
+
+export interface HorusPromptTerminalSession extends HorusEntity {
+	readonly promptId: HorusUuid;
+	readonly workingDirectoryId: HorusUuid;
+	readonly terminalInstanceId: number | null;
+	readonly terminalName: string;
+	readonly agentName: string;
+	readonly launchCommand: string;
+	readonly submitPrompt: boolean;
+	readonly status: HorusPromptTerminalSessionStatus;
+	readonly startedAtUtc: HorusDateTime;
+	readonly endedAtUtc: HorusDateTime | null;
+	readonly lastActivatedAtUtc: HorusDateTime | null;
+	readonly createdAtUtc: HorusDateTime;
+	readonly updatedAtUtc: HorusDateTime;
 }
 
 export interface HorusLinkedDocument extends HorusEntity {
@@ -291,6 +312,8 @@ export interface HorusTaskSummary {
 	readonly updatedAtUtc: HorusDateTime;
 	readonly hasChildPrompts: boolean;
 	readonly hasLinkedPlan: boolean;
+	readonly terminalSessionCount: number;
+	readonly activeTerminalSessionCount: number;
 	readonly linkedDocumentId: HorusUuid | null;
 	readonly pullRequestReference: string | null;
 	readonly promptRowVersion: number;
@@ -421,6 +444,25 @@ export interface HorusUpdatePromptData {
 	readonly rowVersion: number;
 	readonly changeNote?: string | null;
 	readonly mentions?: readonly string[];
+}
+
+export interface HorusCreatePromptTerminalSessionData {
+	readonly promptId: HorusUuid;
+	readonly workingDirectoryId: HorusUuid;
+	readonly terminalInstanceId?: number | null;
+	readonly terminalName: string;
+	readonly agentName: string;
+	readonly launchCommand: string;
+	readonly submitPrompt?: boolean;
+}
+
+export interface HorusUpdatePromptTerminalSessionData {
+	readonly id: HorusUuid;
+	readonly terminalInstanceId?: number | null;
+	readonly terminalName?: string;
+	readonly status?: HorusPromptTerminalSessionStatus;
+	readonly endedAtUtc?: HorusDateTime | null;
+	readonly lastActivatedAtUtc?: HorusDateTime | null;
 }
 
 export interface HorusCreateLinkedDocumentData {

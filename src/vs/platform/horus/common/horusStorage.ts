@@ -1,13 +1,13 @@
 import { Event } from '../../../base/common/event.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
-import { HorusAdvanceWorkflowData, HorusAdvanceWorkflowToRoleData, HorusChangeWorkflowActorData, HorusCompleteWorkflowData, HorusCreateLinkedDocumentData, HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentQuery, HorusLinkedDocumentSyncResult, HorusLinkedDocumentVersion, HorusLinkedDocumentVersionSource, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusPromptVersion, HorusReopenWorkflowData, HorusReorderBoardColumnData, HorusReviewVerdictData, HorusSetWorkflowPhaseData, HorusStartWorkflowData, HorusStorageHealth, HorusTaskSummary, HorusUpdateLinkedDocumentStatusData, HorusUpdatePromptData, HorusUpdateTaskPhasesData, HorusUpdateWorkflowTemplateData, HorusWorkflowBoardQuery, HorusWorkflowDto, HorusWorkflowNoteData, HorusWorkflowTemplateDto, HorusWorkspace } from './horusTypes.js';
+import { HorusAdvanceWorkflowData, HorusAdvanceWorkflowToRoleData, HorusChangeWorkflowActorData, HorusCompleteWorkflowData, HorusCreateLinkedDocumentData, HorusCreatePromptData, HorusCreatePromptTerminalSessionData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentQuery, HorusLinkedDocumentSyncResult, HorusLinkedDocumentVersion, HorusLinkedDocumentVersionSource, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusPromptTerminalSession, HorusPromptVersion, HorusReopenWorkflowData, HorusReorderBoardColumnData, HorusReviewVerdictData, HorusSetWorkflowPhaseData, HorusStartWorkflowData, HorusStorageHealth, HorusTaskSummary, HorusUpdateLinkedDocumentStatusData, HorusUpdatePromptData, HorusUpdatePromptTerminalSessionData, HorusUpdateTaskPhasesData, HorusUpdateWorkflowTemplateData, HorusWorkflowBoardQuery, HorusWorkflowDto, HorusWorkflowNoteData, HorusWorkflowTemplateDto, HorusWorkspace } from './horusTypes.js';
 
 export const HORUS_STORAGE_CHANNEL = 'horus/storage';
 
 export const IHorusStorageService = createDecorator<IHorusStorageService>('horusStorageService');
 
 export interface HorusDataChangeEvent {
-	readonly kind: 'workspace' | 'prompt' | 'linkedDocument' | 'workflow' | 'storage';
+	readonly kind: 'workspace' | 'prompt' | 'linkedDocument' | 'workflow' | 'terminalSession' | 'storage';
 	readonly id?: string;
 }
 
@@ -25,6 +25,9 @@ export interface IHorusStorageService {
 	getPromptVersion(promptId: string, versionNumber: number): Promise<HorusPromptVersion | undefined>;
 	createPrompt(data: HorusCreatePromptData): Promise<HorusPrompt>;
 	updatePrompt(data: HorusUpdatePromptData): Promise<HorusPrompt>;
+	listPromptTerminalSessions(promptId: string): Promise<readonly HorusPromptTerminalSession[]>;
+	createPromptTerminalSession(data: HorusCreatePromptTerminalSessionData): Promise<HorusPromptTerminalSession>;
+	updatePromptTerminalSession(data: HorusUpdatePromptTerminalSessionData): Promise<HorusPromptTerminalSession>;
 	listLinkedDocuments(query?: HorusLinkedDocumentQuery): Promise<readonly HorusLinkedDocument[]>;
 	getLinkedDocumentForPrompt(promptId: string): Promise<HorusLinkedDocument | undefined>;
 	listLinkedDocumentVersions(linkedDocumentId: string): Promise<readonly HorusLinkedDocumentVersion[]>;

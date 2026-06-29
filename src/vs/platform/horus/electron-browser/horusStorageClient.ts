@@ -1,7 +1,7 @@
 import { Event } from '../../../base/common/event.js';
 import { IChannel } from '../../../base/parts/ipc/common/ipc.js';
 import { HorusDataChangeEvent, IHorusStorageService } from '../common/horusStorage.js';
-import { HorusAdvanceWorkflowData, HorusAdvanceWorkflowToRoleData, HorusChangeWorkflowActorData, HorusCompleteWorkflowData, HorusCreateLinkedDocumentData, HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentQuery, HorusLinkedDocumentSyncResult, HorusLinkedDocumentVersion, HorusLinkedDocumentVersionSource, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusPromptVersion, HorusReopenWorkflowData, HorusReorderBoardColumnData, HorusReviewVerdictData, HorusSetWorkflowPhaseData, HorusStartWorkflowData, HorusStorageHealth, HorusTaskSummary, HorusUpdateLinkedDocumentStatusData, HorusUpdatePromptData, HorusUpdateTaskPhasesData, HorusUpdateWorkflowTemplateData, HorusWorkflowBoardQuery, HorusWorkflowDto, HorusWorkflowNoteData, HorusWorkflowTemplateDto, HorusWorkspace } from '../common/horusTypes.js';
+import { HorusAdvanceWorkflowData, HorusAdvanceWorkflowToRoleData, HorusChangeWorkflowActorData, HorusCompleteWorkflowData, HorusCreateLinkedDocumentData, HorusCreatePromptData, HorusCreatePromptTerminalSessionData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentQuery, HorusLinkedDocumentSyncResult, HorusLinkedDocumentVersion, HorusLinkedDocumentVersionSource, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptQuery, HorusPromptTerminalSession, HorusPromptVersion, HorusReopenWorkflowData, HorusReorderBoardColumnData, HorusReviewVerdictData, HorusSetWorkflowPhaseData, HorusStartWorkflowData, HorusStorageHealth, HorusTaskSummary, HorusUpdateLinkedDocumentStatusData, HorusUpdatePromptData, HorusUpdatePromptTerminalSessionData, HorusUpdateTaskPhasesData, HorusUpdateWorkflowTemplateData, HorusWorkflowBoardQuery, HorusWorkflowDto, HorusWorkflowNoteData, HorusWorkflowTemplateDto, HorusWorkspace } from '../common/horusTypes.js';
 
 export class HorusStorageChannelClient implements IHorusStorageService {
 
@@ -51,6 +51,18 @@ export class HorusStorageChannelClient implements IHorusStorageService {
 
 	updatePrompt(data: HorusUpdatePromptData): Promise<HorusPrompt> {
 		return this.channel.call('updatePrompt', data);
+	}
+
+	listPromptTerminalSessions(promptId: string): Promise<readonly HorusPromptTerminalSession[]> {
+		return this.channel.call('listPromptTerminalSessions', promptId);
+	}
+
+	createPromptTerminalSession(data: HorusCreatePromptTerminalSessionData): Promise<HorusPromptTerminalSession> {
+		return this.channel.call('createPromptTerminalSession', data);
+	}
+
+	updatePromptTerminalSession(data: HorusUpdatePromptTerminalSessionData): Promise<HorusPromptTerminalSession> {
+		return this.channel.call('updatePromptTerminalSession', data);
 	}
 
 	listLinkedDocuments(query?: HorusLinkedDocumentQuery): Promise<readonly HorusLinkedDocument[]> {

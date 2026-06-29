@@ -5,7 +5,7 @@ import { Disposable } from '../../../base/common/lifecycle.js';
 import { Emitter } from '../../../base/common/event.js';
 import { INativeEnvironmentService } from '../../environment/common/environment.js';
 import { IFileService } from '../../files/common/files.js';
-import { HorusAdvanceWorkflowData, HorusAdvanceWorkflowToRoleData, HorusChangeWorkflowActorData, HorusCompleteWorkflowData, HorusCreateLinkedDocumentData, HorusCreatePromptData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentQuery, HorusLinkedDocumentStatus, HorusLinkedDocumentSyncResult, HorusLinkedDocumentType, HorusLinkedDocumentVersion, HorusLinkedDocumentVersionSource, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptKind, HorusPromptQuery, HorusPromptStatus, HorusPromptVersion, HorusReopenWorkflowData, HorusReorderBoardColumnData, HorusResolvedPromptFileReferenceData, HorusReviewVerdictData, HorusSetWorkflowPhaseData, HorusStartWorkflowData, HorusStorageHealth, HorusTargetAgent, HorusTaskSummary, HorusUpdateLinkedDocumentStatusData, HorusUpdatePromptData, HorusUpdateTaskPhasesData, HorusUpdateWorkflowTemplateData, HorusWorkflowBoardQuery, HorusWorkflowDto, HorusWorkflowNoteData, HorusWorkflowTemplateDto, HorusWorkspace } from '../common/horusTypes.js';
+import { HorusAdvanceWorkflowData, HorusAdvanceWorkflowToRoleData, HorusChangeWorkflowActorData, HorusCompleteWorkflowData, HorusCreateLinkedDocumentData, HorusCreatePromptData, HorusCreatePromptTerminalSessionData, HorusCreateWorkspaceData, HorusFileMentionValidationRequest, HorusFileMentionValidationResult, HorusLinkedDocument, HorusLinkedDocumentQuery, HorusLinkedDocumentStatus, HorusLinkedDocumentSyncResult, HorusLinkedDocumentType, HorusLinkedDocumentVersion, HorusLinkedDocumentVersionSource, HorusNativeWorkspaceFolder, HorusPrompt, HorusPromptKind, HorusPromptQuery, HorusPromptStatus, HorusPromptTerminalSession, HorusPromptTerminalSessionStatus, HorusPromptVersion, HorusReopenWorkflowData, HorusReorderBoardColumnData, HorusResolvedPromptFileReferenceData, HorusReviewVerdictData, HorusSetWorkflowPhaseData, HorusStartWorkflowData, HorusStorageHealth, HorusTargetAgent, HorusTaskSummary, HorusUpdateLinkedDocumentStatusData, HorusUpdatePromptData, HorusUpdatePromptTerminalSessionData, HorusUpdateTaskPhasesData, HorusUpdateWorkflowTemplateData, HorusWorkflowBoardQuery, HorusWorkflowDto, HorusWorkflowNoteData, HorusWorkflowTemplateDto, HorusWorkspace } from '../common/horusTypes.js';
 import { HorusDataChangeEvent, IHorusStorageService } from '../common/horusStorage.js';
 import { HorusBackupService } from './horusBackupService.js';
 import { HorusFileValidationService } from './horusFileValidationService.js';
@@ -13,6 +13,7 @@ import { HorusMigrationRunner } from './horusMigrationRunner.js';
 import { horusMigrations } from './migrations/v001_initial.js';
 import { HorusLinkedDocumentRepository } from './repositories/linkedDocumentRepository.js';
 import { HorusPromptRepository } from './repositories/promptRepository.js';
+import { HorusPromptTerminalSessionRepository } from './repositories/terminalSessionRepository.js';
 import { HorusWorkspaceRepository } from './repositories/workspaceRepository.js';
 import { HorusWorkflowRepository } from './repositories/workflowRepository.js';
 import { HorusSQLiteConnection } from './horusSQLiteConnection.js';
@@ -46,6 +47,7 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 
 	private workspaceRepository: HorusWorkspaceRepository | undefined;
 	private promptRepository: HorusPromptRepository | undefined;
+	private terminalSessionRepository: HorusPromptTerminalSessionRepository | undefined;
 	private linkedDocumentRepository: HorusLinkedDocumentRepository | undefined;
 	private workflowRepository: HorusWorkflowRepository | undefined;
 	private ready: Promise<void> | undefined;
@@ -186,6 +188,39 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 		const updated = await this.writeQueue.enqueue(() => this.getPromptRepository().update(data, fileReferences));
 		this.onDidChangeDataEmitter.fire({ kind: 'prompt', id: updated.id });
 		return updated;
+	}
+
+	async listPromptTerminalSessions(promptId: string): Promise<readonly HorusPromptTerminalSession[]> {
+		await this.ensureReady();
+		return this.getTerminalSessionRepository().listByPrompt(promptId);
+	}
+
+	async createPromptTerminalSession(data: HorusCreatePromptTerminalSessionData): Promise<HorusPromptTerminalSession> {
+		await this.ensureReady();
+		this.validateTerminalSessionFields(data);
+
+		const prompt = await this.getPromptRepository().get(data.promptId);
+		if (!prompt) {
+			throw new Error('Prompt was not found.');
+		}
+		if (prompt.workingDirectoryId !== data.workingDirectoryId) {
+			throw new Error('Terminal session workspace does not match the prompt workspace.');
+		}
+
+		const session = await this.writeQueue.enqueue(() => this.getTerminalSessionRepository().create(data));
+		this.onDidChangeDataEmitter.fire({ kind: 'terminalSession', id: session.promptId });
+		return session;
+	}
+
+	async updatePromptTerminalSession(data: HorusUpdatePromptTerminalSessionData): Promise<HorusPromptTerminalSession> {
+		await this.ensureReady();
+		if (data.status !== undefined && !this.isTerminalSessionStatus(data.status)) {
+			throw new Error('Terminal session status contains an invalid enum value.');
+		}
+
+		const session = await this.writeQueue.enqueue(() => this.getTerminalSessionRepository().update(data));
+		this.onDidChangeDataEmitter.fire({ kind: 'terminalSession', id: session.promptId });
+		return session;
 	}
 
 	async listLinkedDocuments(query?: HorusLinkedDocumentQuery): Promise<readonly HorusLinkedDocument[]> {
@@ -427,6 +462,22 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 			|| value === HorusLinkedDocumentStatus.Error;
 	}
 
+	private isTerminalSessionStatus(value: HorusPromptTerminalSessionStatus): boolean {
+		return value === HorusPromptTerminalSessionStatus.Active || value === HorusPromptTerminalSessionStatus.Closed;
+	}
+
+	private validateTerminalSessionFields(data: HorusCreatePromptTerminalSessionData): void {
+		if (!data.terminalName.trim()) {
+			throw new Error('Terminal session name is required.');
+		}
+		if (!data.agentName.trim()) {
+			throw new Error('Terminal session agent is required.');
+		}
+		if (!data.launchCommand.trim()) {
+			throw new Error('Terminal session launch command is required.');
+		}
+	}
+
 	private validateLinkedDocumentPath(absolutePath: string): void {
 		if (!absolutePath.trim()) {
 			throw new Error('Linked plan path is required.');
@@ -498,6 +549,7 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 				await this.migrationRunner.migrate();
 				this.workspaceRepository = new HorusWorkspaceRepository(this.connection);
 				this.promptRepository = new HorusPromptRepository(this.connection);
+				this.terminalSessionRepository = new HorusPromptTerminalSessionRepository(this.connection);
 				this.linkedDocumentRepository = new HorusLinkedDocumentRepository(this.connection);
 				this.workflowRepository = new HorusWorkflowRepository(this.connection);
 				this.onDidChangeDataEmitter.fire({ kind: 'storage' });
@@ -521,6 +573,14 @@ export class HorusStorageService extends Disposable implements IHorusStorageServ
 		}
 
 		return this.promptRepository;
+	}
+
+	private getTerminalSessionRepository(): HorusPromptTerminalSessionRepository {
+		if (!this.terminalSessionRepository) {
+			throw new Error('Horus terminal session repository is not initialized');
+		}
+
+		return this.terminalSessionRepository;
 	}
 
 	private getLinkedDocumentRepository(): HorusLinkedDocumentRepository {

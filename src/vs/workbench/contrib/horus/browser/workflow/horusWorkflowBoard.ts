@@ -3,7 +3,7 @@ import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IHorusStorageService } from '../../../../../platform/horus/common/horusStorage.js';
-import { HorusPrompt, HorusPromptStatus, HorusTaskSummary, HorusWorkflowActor, HorusWorkflowBoardQuery, HorusWorkflowDto, HorusWorkflowEventType, HorusWorkflowPhaseDto, HorusWorkflowPhaseInput, HorusWorkflowPhaseRole, HorusWorkflowStatus, HorusWorkflowTemplateDto, HorusWorkspace } from '../../../../../platform/horus/common/horusTypes.js';
+import { HorusPrompt, HorusPromptStatus, HorusPromptTerminalSession, HorusPromptTerminalSessionStatus, HorusTaskSummary, HorusWorkflowActor, HorusWorkflowBoardQuery, HorusWorkflowDto, HorusWorkflowEventType, HorusWorkflowPhaseDto, HorusWorkflowPhaseInput, HorusWorkflowPhaseRole, HorusWorkflowStatus, HorusWorkflowTemplateDto, HorusWorkspace } from '../../../../../platform/horus/common/horusTypes.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
@@ -59,6 +59,7 @@ type WebviewMessage =
 	| { readonly command: 'addReviewVerdict'; readonly promptId: string; readonly rowVersion: string; readonly value?: string }
 	| { readonly command: 'saveTaskPhases'; readonly promptId: string; readonly rowVersion: string; readonly value?: string }
 	| { readonly command: 'launchTerminal'; readonly promptId: string; readonly agent?: string; readonly submitPrompt?: string }
+	| { readonly command: 'focusTerminal'; readonly terminalSessionId?: string; readonly terminalInstanceId?: string }
 	| { readonly command: 'dropTask'; readonly promptId: string; readonly targetColumnId: string; readonly targetPromptId?: string };
 
 let activeBoard: HorusWorkflowBoardPanel | undefined;
@@ -190,7 +191,7 @@ class HorusWorkflowBoardController extends Disposable {
 		super();
 		this.viewMode = options.initialViewMode;
 		this._register(this.horusStorageService.onDidChangeData(event => {
-			if (event.kind === 'prompt' || event.kind === 'linkedDocument' || event.kind === 'workflow' || event.kind === 'workspace' || event.kind === 'storage') {
+			if (event.kind === 'prompt' || event.kind === 'linkedDocument' || event.kind === 'workflow' || event.kind === 'terminalSession' || event.kind === 'workspace' || event.kind === 'storage') {
 				this.refresh().catch(error => this.notificationService.error(error));
 			}
 		}));
@@ -218,9 +219,17 @@ class HorusWorkflowBoardController extends Disposable {
 			this.selectedPromptId = undefined;
 		}
 
-		const selectedWorkflow = this.selectedPromptId ? await this.horusStorageService.getWorkflow(this.selectedPromptId) : undefined;
-		const selectedPrompt = this.selectedPromptId ? await this.horusStorageService.getPrompt(this.selectedPromptId) : undefined;
-		this.webview.setHtml(this.renderHtml(selectedWorkflow, selectedPrompt));
+		let selectedWorkflow: HorusWorkflowDto | undefined;
+		let selectedPrompt: HorusPrompt | undefined;
+		let selectedTerminalSessions: readonly HorusPromptTerminalSession[] = [];
+		if (this.selectedPromptId) {
+			[selectedWorkflow, selectedPrompt, selectedTerminalSessions] = await Promise.all([
+				this.horusStorageService.getWorkflow(this.selectedPromptId),
+				this.horusStorageService.getPrompt(this.selectedPromptId),
+				this.horusStorageService.listPromptTerminalSessions(this.selectedPromptId)
+			]);
+		}
+		this.webview.setHtml(this.renderHtml(selectedWorkflow, selectedPrompt, selectedTerminalSessions));
 	}
 
 	private async onMessage(message: WebviewMessage): Promise<void> {
@@ -305,6 +314,9 @@ class HorusWorkflowBoardController extends Disposable {
 				case 'launchTerminal':
 					await this.launchTerminal(message.promptId, message.agent, message.submitPrompt === 'true');
 					break;
+				case 'focusTerminal':
+					await this.focusTerminal(message.terminalSessionId, message.terminalInstanceId);
+					break;
 				case 'dropTask':
 					await this.dropTask(message.promptId, message.targetColumnId, message.targetPromptId);
 					break;
@@ -344,6 +356,25 @@ class HorusWorkflowBoardController extends Disposable {
 		const workspace = await this.getPromptWorkspace(prompt);
 		const agent = this.parseTerminalAgent(agentValue) ?? defaultTerminalLaunchForPrompt(prompt);
 		await this.instantiationService.createInstance(HorusTerminalLauncher).launchPrompt(prompt, workspace, agent, submitPrompt);
+	}
+
+	private async focusTerminal(terminalSessionId: string | undefined, terminalInstanceIdValue: string | undefined): Promise<void> {
+		const terminalInstanceId = this.parseRequiredNumber(terminalInstanceIdValue, 'terminal instance id');
+		const focused = await this.instantiationService.createInstance(HorusTerminalLauncher).focusTerminalInstance(terminalInstanceId);
+		const now = new Date().toISOString();
+
+		if (terminalSessionId) {
+			await this.horusStorageService.updatePromptTerminalSession({
+				id: terminalSessionId,
+				status: focused ? HorusPromptTerminalSessionStatus.Active : HorusPromptTerminalSessionStatus.Closed,
+				lastActivatedAtUtc: focused ? now : undefined,
+				endedAtUtc: focused ? undefined : now
+			});
+		}
+
+		if (!focused) {
+			throw new Error('This terminal is no longer available. Run the prompt again to create a new linked terminal.');
+		}
 	}
 
 	private async getPromptWorkspace(prompt: HorusPrompt): Promise<HorusWorkspace> {
@@ -511,7 +542,7 @@ class HorusWorkflowBoardController extends Disposable {
 		return columns;
 	}
 
-	private renderHtml(selectedWorkflow: HorusWorkflowDto | undefined, selectedPrompt: HorusPrompt | undefined): string {
+	private renderHtml(selectedWorkflow: HorusWorkflowDto | undefined, selectedPrompt: HorusPrompt | undefined, selectedTerminalSessions: readonly HorusPromptTerminalSession[]): string {
 		const nonce = generateUuid();
 		const activeFilters = [this.filters.q, this.filters.promptStatus, this.filters.workflowStatus].filter(value => value !== undefined && value !== '').length;
 		const workspaceLabel = this.currentWorkspace?.name ?? localize('horusNoWorkspaceOpen', "no workspace open");
@@ -563,7 +594,7 @@ class HorusWorkflowBoardController extends Disposable {
 			${this.columns.map(column => this.renderColumn(column)).join('')}
 		</section>
 		<aside class="details">
-			${this.renderDetails(selectedWorkflow, selectedPrompt)}
+			${this.renderDetails(selectedWorkflow, selectedPrompt, selectedTerminalSessions)}
 		</aside>
 	</main>
 	<script nonce="${nonce}">
@@ -597,6 +628,9 @@ class HorusWorkflowBoardController extends Disposable {
 		const selected = task.promptId === this.selectedPromptId ? ' selected' : '';
 		const actor = task.currentActor ? this.actorLabel(task.currentActor) : undefined;
 		const phase = task.currentPhaseName ? this.phaseBadge(task.currentPhaseName, task.currentPhaseColor) : `<span class="badge muted">${escapeHtml(localize('horusWorkflowNotStarted', "Not started"))}</span>`;
+		const phases = [...task.phases].sort((a, b) => a.orderIndex - b.orderIndex);
+		const currentIndex = phases.findIndex(candidate => candidate.id === task.currentPhaseId);
+		const previous = currentIndex > 0 ? phases[currentIndex - 1] : undefined;
 		return `<article class="card${selected}" draggable="true" data-prompt-id="${escapeAttribute(task.promptId)}" data-column-id="${escapeAttribute(columnId)}">
 	<button class="card-title" data-command="selectPrompt" data-prompt-id="${escapeAttribute(task.promptId)}">
 		<span>${task.taskNumber ? `<span class="badge blue">${escapeHtml(task.taskNumber)}</span>` : ''}${escapeHtml(task.title)}</span>
@@ -609,19 +643,21 @@ class HorusWorkflowBoardController extends Disposable {
 		${task.reviewVerdictSourcePhaseName ? `<span class="badge amber">${escapeHtml(localize('horusReviewVerdictBadge', "Verdict: {0}", task.reviewVerdictSourcePhaseName))}</span>` : ''}
 		${task.hasLinkedPlan ? '<span class="badge green">plan</span>' : ''}
 		${task.hasChildPrompts ? '<span class="badge purple">children</span>' : ''}
+		${task.terminalSessionCount > 0 ? `<span class="badge blue">${escapeHtml(localize('horusTerminalCountBadge', "{0}/{1} terminals", task.activeTerminalSessionCount, task.terminalSessionCount))}</span>` : ''}
 	</div>
 	<div class="card-actions">
 		<button data-command="openPrompt" data-prompt-id="${escapeAttribute(task.promptId)}">${escapeHtml(localize('horusOpenPrompt', "Open"))}</button>
 		${task.hasLinkedPlan ? `<button data-command="createChild" data-prompt-id="${escapeAttribute(task.promptId)}">${escapeHtml(localize('horusCreateChildFromCard', "Child"))}</button>` : ''}
 		${task.workflowStatus === null ? `<button data-command="startWorkflow" data-prompt-id="${escapeAttribute(task.promptId)}">${escapeHtml(localize('horusStartWorkflow', "Start"))}</button>` : ''}
-		${task.workflowStatus === HorusWorkflowStatus.Active && task.workflowRowVersion !== null ? `<button data-command="advanceWorkflow" data-prompt-id="${escapeAttribute(task.promptId)}" data-row-version="${task.workflowRowVersion}">${escapeHtml(localize('horusAdvanceWorkflow', "Advance"))}</button>` : ''}
+		${previous && task.workflowStatus === HorusWorkflowStatus.Active && task.workflowRowVersion !== null ? `<button data-command="setWorkflowPhase" data-prompt-id="${escapeAttribute(task.promptId)}" data-row-version="${task.workflowRowVersion}" data-phase-id="${escapeAttribute(previous.id)}">${escapeHtml(localize('horusPreviousPhase', "Back"))}</button>` : ''}
+		${task.workflowStatus === HorusWorkflowStatus.Active && task.workflowRowVersion !== null ? `<button data-command="advanceWorkflow" data-prompt-id="${escapeAttribute(task.promptId)}" data-row-version="${task.workflowRowVersion}">${escapeHtml(localize('horusAdvanceWorkflow', "Next"))}</button>` : ''}
 		${task.workflowStatus === HorusWorkflowStatus.Done && task.workflowRowVersion !== null ? `<button data-command="reopenWorkflow" data-prompt-id="${escapeAttribute(task.promptId)}" data-row-version="${task.workflowRowVersion}">${escapeHtml(localize('horusReopenWorkflow', "Reopen"))}</button>` : ''}
 		<button data-command="launchTerminal" data-prompt-id="${escapeAttribute(task.promptId)}" data-submit-prompt="true">${escapeHtml(localize('horusRunAgent', "Run"))}</button>
 	</div>
 </article>`;
 	}
 
-	private renderDetails(workflow: HorusWorkflowDto | undefined, prompt: HorusPrompt | undefined): string {
+	private renderDetails(workflow: HorusWorkflowDto | undefined, prompt: HorusPrompt | undefined, terminalSessions: readonly HorusPromptTerminalSession[]): string {
 		const task = prompt ? this.board.find(candidate => candidate.promptId === prompt.id) : undefined;
 		if (!prompt || !task) {
 			return `<div class="details-empty">
@@ -638,6 +674,7 @@ class HorusWorkflowBoardController extends Disposable {
 		${this.template?.phases.map(phase => `<button data-command="startWorkflow" data-prompt-id="${escapeAttribute(prompt.id)}" data-initial-phase-order-index="${phase.orderIndex}">${escapeHtml(phase.name)}</button>`).join('') ?? ''}
 	</div>
 	${this.renderPromptActions(prompt, task)}
+	${this.renderTerminalSessions(terminalSessions)}
 </div>`;
 		}
 
@@ -663,7 +700,7 @@ class HorusWorkflowBoardController extends Disposable {
 	</div>
 	<div class="details-actions">
 		${previous && workflow.status === HorusWorkflowStatus.Active ? `<button data-command="setWorkflowPhase" data-prompt-id="${escapeAttribute(prompt.id)}" data-row-version="${workflow.rowVersion}" data-phase-id="${escapeAttribute(previous.id)}">${escapeHtml(localize('horusPreviousPhase', "Back"))}</button>` : ''}
-		${workflow.status === HorusWorkflowStatus.Active ? `<button data-command="advanceWorkflow" data-prompt-id="${escapeAttribute(prompt.id)}" data-row-version="${workflow.rowVersion}">${escapeHtml(localize('horusAdvanceWorkflow', "Advance"))}</button>` : ''}
+		${workflow.status === HorusWorkflowStatus.Active ? `<button data-command="advanceWorkflow" data-prompt-id="${escapeAttribute(prompt.id)}" data-row-version="${workflow.rowVersion}">${escapeHtml(localize('horusAdvanceWorkflow', "Next"))}</button>` : ''}
 		${workflow.status === HorusWorkflowStatus.Active ? `<button data-command="completeWorkflow" data-prompt-id="${escapeAttribute(prompt.id)}" data-row-version="${workflow.rowVersion}">${escapeHtml(localize('horusCompleteWorkflow', "Complete"))}</button>` : ''}
 		${workflow.status === HorusWorkflowStatus.Done ? `<button data-command="reopenWorkflow" data-prompt-id="${escapeAttribute(prompt.id)}" data-row-version="${workflow.rowVersion}">${escapeHtml(localize('horusReopenWorkflow', "Reopen"))}</button>` : ''}
 	</div>
@@ -696,6 +733,7 @@ class HorusWorkflowBoardController extends Disposable {
 		<button data-command="saveTaskPhases" data-prompt-id="${escapeAttribute(prompt.id)}" data-row-version="${workflow.rowVersion}" data-source="workflow-phases-json">${escapeHtml(localize('horusSavePhases', "Save phases"))}</button>
 	</details>
 	${this.renderPromptActions(prompt, task)}
+	${this.renderTerminalSessions(terminalSessions)}
 	<section class="timeline">
 		<h3>${escapeHtml(localize('horusWorkflowTimeline', "Timeline"))}</h3>
 		${workflow.events.map(event => this.renderEvent(event)).join('') || `<p class="muted-text">${escapeHtml(localize('horusNoWorkflowEvents', "No events yet."))}</p>`}
@@ -719,6 +757,47 @@ class HorusWorkflowBoardController extends Disposable {
 		<button data-command="launchTerminal" data-prompt-id="${escapeAttribute(prompt.id)}" data-agent="Codex" data-submit-prompt="true">Codex</button>
 	</div>
 </section>`;
+	}
+
+	private renderTerminalSessions(sessions: readonly HorusPromptTerminalSession[]): string {
+		const activeCount = sessions.filter(session => session.status === HorusPromptTerminalSessionStatus.Active).length;
+		return `<section class="terminal-sessions">
+	<div class="section-title">
+		<h3>${escapeHtml(localize('horusLinkedTerminals', "Linked terminals"))}</h3>
+		<span class="badge blue">${escapeHtml(localize('horusLinkedTerminalCount', "{0}/{1} active", activeCount, sessions.length))}</span>
+	</div>
+	${sessions.map(session => this.renderTerminalSession(session)).join('') || `<p class="muted-text">${escapeHtml(localize('horusNoLinkedTerminals', "No terminals are linked to this prompt yet. Use Run or Submit prompt to create one."))}</p>`}
+</section>`;
+	}
+
+	private renderTerminalSession(session: HorusPromptTerminalSession): string {
+		const isActive = session.status === HorusPromptTerminalSessionStatus.Active;
+		const statusLabel = isActive ? localize('horusTerminalActive', "Active") : localize('horusTerminalClosed', "Closed");
+		const statusClass = isActive ? 'blue' : 'muted';
+		const instanceLabel = session.terminalInstanceId !== null
+			? localize('horusTerminalInstance', "Terminal #{0}", session.terminalInstanceId)
+			: localize('horusTerminalInstanceUnknown', "Terminal instance unknown");
+		const focusAction = isActive && session.terminalInstanceId !== null
+			? `<button data-command="focusTerminal" data-terminal-session-id="${escapeAttribute(session.id)}" data-terminal-instance-id="${session.terminalInstanceId}">${escapeHtml(localize('horusFocusTerminal', "Focus"))}</button>`
+			: '';
+		const endedLabel = session.endedAtUtc
+			? `<span>${escapeHtml(localize('horusTerminalEndedAt', "Closed {0}", new Date(session.endedAtUtc).toLocaleString()))}</span>`
+			: '';
+
+		return `<article class="terminal-session">
+	<div class="terminal-session-header">
+		<strong>${escapeHtml(session.terminalName)}</strong>
+		<span class="badge ${statusClass}">${escapeHtml(statusLabel)}</span>
+	</div>
+	<div class="terminal-meta">
+		<span>${escapeHtml(session.agentName)}</span>
+		<span>${escapeHtml(instanceLabel)}</span>
+		<span>${escapeHtml(localize('horusTerminalStartedAt', "Started {0}", new Date(session.startedAtUtc).toLocaleString()))}</span>
+		${endedLabel}
+	</div>
+	<code>${escapeHtml(session.launchCommand)}</code>
+	${focusAction ? `<div class="details-actions">${focusAction}</div>` : ''}
+</article>`;
 	}
 
 	private renderActorOptions(current: HorusWorkflowActor | null): string {
@@ -793,6 +872,15 @@ class HorusWorkflowBoardController extends Disposable {
 
 		const parsed = Number(value);
 		return Number.isFinite(parsed) ? parsed : undefined;
+	}
+
+	private parseRequiredNumber(value: string | undefined, label: string): number {
+		const parsed = this.parseOptionalNumber(value);
+		if (parsed === undefined || !Number.isInteger(parsed) || parsed < 0) {
+			throw new Error(`Invalid ${label}.`);
+		}
+
+		return parsed;
 	}
 
 	private parseActor(value: string | undefined): HorusWorkflowActor | undefined {
@@ -934,14 +1022,38 @@ button:hover { background: var(--vscode-button-secondaryHoverBackground); }
 	background: var(--vscode-sideBar-background);
 }
 .details-block, .details-empty { display: grid; gap: 12px; padding: 16px; }
-.details-block h2, .details-empty h2, .timeline h3, .prompt-actions h3 { margin: 0; }
+.details-block h2, .details-empty h2, .timeline h3, .prompt-actions h3, .terminal-sessions h3 { margin: 0; }
 .large .badge { font-size: 12px; }
 .field-row label, .stack { display: grid; gap: 5px; }
 .field-row select { min-width: 190px; }
 textarea { width: 100%; resize: vertical; }
 details { border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 8px; }
 summary { cursor: pointer; }
-.timeline { display: grid; gap: 8px; }
+.timeline, .terminal-sessions { display: grid; gap: 8px; }
+.section-title, .terminal-session-header, .terminal-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+}
+.section-title, .terminal-session-header { justify-content: space-between; }
+.terminal-session {
+	display: grid;
+	gap: 6px;
+	padding: 8px;
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 6px;
+	background: var(--vscode-editorWidget-background);
+}
+.terminal-session code {
+	display: block;
+	padding: 5px 7px;
+	border-radius: 4px;
+	color: var(--vscode-textPreformat-foreground);
+	background: var(--vscode-textCodeBlock-background);
+	overflow-wrap: anywhere;
+}
+.terminal-meta { color: var(--vscode-descriptionForeground); font-size: 12px; }
 .event {
 	display: grid;
 	gap: 3px;
