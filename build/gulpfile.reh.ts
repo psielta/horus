@@ -439,7 +439,16 @@ function packageTask(type: string, platform: string, arch: string, sourceFolderN
 		const dependenciesSrc = productionDependencies.map(d => path.relative(REPO_ROOT, d)).map(d => [`${d}/**`, `!${d}/**/{test,tests}/**`, `!${d}/.bin/**`]).flat();
 		const cleanedDeps = gulp.src(dependenciesSrc, { base: 'remote', dot: true })
 			// filter out unnecessary files, no source maps in server build
-			.pipe(filter(['**', '!**/package-lock.json', '!**/*.{js,css}.map']))
+			.pipe(filter([
+				'**',
+				'!**/package-lock.json',
+				'!**/*.{js,css}.map',
+				'!**/node_modules/@anthropic-ai/claude-agent-sdk/**',
+				'!**/node_modules/@github/copilot/**',
+				'!**/node_modules/@github/copilot-*/**',
+				'!**/node_modules/@github/copilot-sdk/**',
+				'!**/node_modules/@vscode/copilot-api/**'
+			]))
 			.pipe(util.cleanNodeModules(path.join(import.meta.dirname, '.moduleignore')))
 			.pipe(util.cleanNodeModules(path.join(import.meta.dirname, `.moduleignore.${process.platform}`)));
 		const deps = cleanedDeps

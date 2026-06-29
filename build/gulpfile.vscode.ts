@@ -332,6 +332,13 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 		const dependenciesSrc = productionDependencies.map(d => path.relative(root, d)).map(d => [`${d}/**`, `!${d}/**/{test,tests}/**`]).flat().concat('!**/*.mk');
 
 		const depFilterPattern = ['**', `!**/${config.version}/**`, '!**/bin/darwin-arm64-87/**', '!**/package-lock.json', '!**/yarn.lock'];
+		depFilterPattern.push(
+			'!**/node_modules/@anthropic-ai/claude-agent-sdk/**',
+			'!**/node_modules/@github/copilot/**',
+			'!**/node_modules/@github/copilot-*/**',
+			'!**/node_modules/@github/copilot-sdk/**',
+			'!**/node_modules/@vscode/copilot-api/**'
+		);
 		if (stripSourceMapsInPackagingTasks) {
 			depFilterPattern.push('!**/*.{js,css}.map');
 		}
